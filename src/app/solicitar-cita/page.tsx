@@ -103,6 +103,7 @@ export default function SolicitarCitaPage() {
 
   const [newSlot, setNewSlot] = useState<TimeSlot>({ date: '', time: '' });
   const [submitted, setSubmitted] = useState(false);
+  const [acceptedPrivacy, setAcceptedPrivacy] = useState(false);
 
   const handleNext = () => {
     setDirection(1);
@@ -123,11 +124,11 @@ export default function SolicitarCitaPage() {
       case 1:
         return formData.serviceType !== '';
       case 2:
-        return formData.duration !== '';
+        return (formData.duration as string) !== '';
       case 3:
         return formData.preferredSlots.length >= 1;
       case 4:
-        return formData.name && formData.email && formData.phone;
+        return formData.name && formData.email && formData.phone && acceptedPrivacy;
       default:
         return true;
     }
@@ -543,6 +544,24 @@ export default function SolicitarCitaPage() {
                         />
                       </div>
                     </div>
+
+                    {/* RGPD Checkbox */}
+                    <label className="flex items-start gap-3 cursor-pointer group">
+                      <input
+                        type="checkbox"
+                        checked={acceptedPrivacy}
+                        onChange={(e) => setAcceptedPrivacy(e.target.checked)}
+                        required
+                        className="mt-1 w-4 h-4 rounded border-border accent-accent flex-shrink-0"
+                      />
+                      <span className="text-xs text-muted-foreground leading-relaxed group-hover:text-ivory/70 transition-colors">
+                        He leído y acepto la{' '}
+                        <Link href="/politica-de-privacidad" className="text-accent hover:underline" target="_blank">
+                          Política de Privacidad
+                        </Link>{' '}
+                        y el tratamiento de mis datos personales.
+                      </span>
+                    </label>
                   </GlassCard>
                 </div>
               )}

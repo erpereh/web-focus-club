@@ -14,6 +14,7 @@ const navLinks = [
   { href: '/sandra', label: 'Sandra' },
   { href: '/servicios', label: 'Servicios' },
   { href: '/centro', label: 'El Centro' },
+  { href: '/galeria', label: 'Galería' },
   { href: '/contacto', label: 'Contacto' },
 ];
 

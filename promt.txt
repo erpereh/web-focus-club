@@ -1,0 +1,17 @@
+He revisado la web. La página pública de la galería se ve increíble, pero el CMS sigue teniendo 3 errores críticos que debes solucionar con MCP:
+
+1. Gestor Vacío (Cambio de método en Cloudinary):
+La función v2.search está fallando al encontrar mis carpetas en la raíz. Ve a src/app/api/images/route.ts y cambia la forma de obtener las imágenes. NO uses search. Usa cloudinary.v2.api.resources con el parámetro prefix.
+El código debe ser algo así:
+const result = await cloudinary.v2.api.resources({ type: 'upload', prefix: folder + '/', max_results: 50 });
+(Asegúrate de añadir la barra '/' al final del folder para que busque exactamente dentro de esa carpeta).
+
+2. Pestañas Duplicadas en el Gestor:
+En ContextualImageManager.tsx, me siguen saliendo pestañas duplicadas (ej. Sandra, Galeria, Sandra, Hero, Nosotros, General, Hero). Elimina la lógica dinámica que duplica la pestaña actual y define un array estricto y fijo:
+const FOLDERS = ['Sandra', 'Galeria', 'Hero', 'Nosotros', 'General'];
+Usa solo ese array para renderizar los botones de navegación.
+
+3. Secciones Superpuestas en el CMS:
+En admin/page.tsx, las secciones 'Galería Pública' y 'Contacto & Hero' se renderizan a la vez en la pantalla. Arregla el renderizado condicional. Usa un switch o if/else estricto basado en el estado activeTab para garantizar que solo se devuelve y se muestra el componente de la pestaña seleccionada en el menú lateral.
+
+Aplica estos 3 cambios exactos y confírmame los archivos actualizados.

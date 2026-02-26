@@ -41,6 +41,13 @@ export async function updateUserProfile(uid: string, data: Partial<UserProfile>)
     await updateDoc(doc(db, 'users', uid), data);
 }
 
+export async function getUsers(): Promise<UserProfile[]> {
+    const snap = await getDocs(
+        query(collection(db, 'users'))
+    );
+    return snap.docs.map((d) => d.data() as UserProfile);
+}
+
 // ============================================
 // CITAS (APPOINTMENTS)
 // ============================================
@@ -179,5 +186,23 @@ export async function updateCentroData(data: Partial<CentroData>): Promise<void>
     if (!current) return;
     await updateDoc(doc(db, 'site_content', SITE_CONTENT_DOC), {
         centro: { ...current.centro, ...data },
+    });
+}
+
+// ============================================
+// ACTIVITY LOGS (TRAZABILIDAD)
+// ============================================
+
+export interface ActivityLog {
+    action: string;
+    adminEmail: string;
+    details?: string;
+    timestamp: string;
+}
+
+export async function addActivityLog(log: Omit<ActivityLog, 'timestamp'>): Promise<void> {
+    await addDoc(collection(db, 'activity_logs'), {
+        ...log,
+        timestamp: new Date().toISOString(),
     });
 }

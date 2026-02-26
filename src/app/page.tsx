@@ -3,7 +3,7 @@
 import { motion } from 'framer-motion';
 import Link from 'next/link';
 import Image from 'next/image';
-import { ArrowRight, Star, Clock, Users, Award, Dumbbell, Heart, Activity, Apple } from 'lucide-react';
+import { ArrowRight, Star, Clock, Users, User, Award, Dumbbell, Heart, Activity, Apple } from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass-card';
 import { PremiumButton } from '@/components/ui/premium-button';
 import { useCMS, useServices, useTestimonials } from '@/hooks/useFirestore';
@@ -44,10 +44,11 @@ export default function Home() {
             src="/images/hero-gym.png"
             alt="Focus Club Vallecas"
             fill
-            className="object-cover opacity-30"
+            className="object-cover opacity-50"
             priority
           />
-          <div className="absolute inset-0 bg-background/95" />
+          <div className="absolute inset-0 bg-background/85" />
+          <div className="absolute inset-0 bg-gradient-to-t from-background via-transparent to-background/50" />
         </div>
 
         {/* Decorative elements */}
@@ -200,12 +201,9 @@ export default function Home() {
             >
               <div className="aspect-[4/5] rounded-3xl overflow-hidden glass-card p-2">
                 <div className="relative w-full h-full rounded-2xl overflow-hidden">
-                  <Image
-                    src="/images/sandra-trainer.png"
-                    alt="Sandra Andújar - Fundadora de Focus Club Vallecas"
-                    fill
-                    className="object-cover"
-                  />
+                  <div className="w-full h-full bg-gradient-to-br from-carbon to-background flex items-center justify-center">
+                    <User className="w-20 h-20 text-muted-foreground opacity-20" />
+                  </div>
                   <div className="absolute inset-0 bg-background/80" />
                   <div className="absolute bottom-0 left-0 right-0 p-6 text-center">
                     <p className="text-foreground font-semibold text-lg">Sandra Andújar</p>
@@ -322,8 +320,8 @@ export default function Home() {
                       <Star
                         key={i}
                         className={`w-4 h-4 ${i < testimonial.rating
-                            ? 'text-primary fill-primary'
-                            : 'text-muted-foreground'
+                          ? 'text-primary fill-primary'
+                          : 'text-muted-foreground'
                           }`}
                       />
                     ))}

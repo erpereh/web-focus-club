@@ -5,12 +5,13 @@ import { cn } from '@/lib/utils';
 import { forwardRef } from 'react';
 import { Loader2 } from 'lucide-react';
 
-interface PremiumButtonProps extends HTMLMotionProps<'button'> {
+interface PremiumButtonProps extends Omit<HTMLMotionProps<'button'>, 'children'> {
   variant?: 'primary' | 'secondary' | 'outline' | 'ghost' | 'cta';
   size?: 'sm' | 'md' | 'lg';
   loading?: boolean;
   icon?: React.ReactNode;
   iconPosition?: 'left' | 'right';
+  children?: React.ReactNode;
 }
 
 export const PremiumButton = forwardRef<HTMLButtonElement, PremiumButtonProps>(

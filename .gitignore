@@ -2,6 +2,7 @@
 
 # dependencies
 node_modules
+.firebase/
 /.pnp
 .pnp.*
 .yarn/*
@@ -19,6 +20,7 @@ node_modules
 
 # production
 /build
+/.firebase/
 
 # misc
 .DS_Store

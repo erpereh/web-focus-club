@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+
 import Link from 'next/link';
 import {
   LayoutDashboard,
@@ -36,6 +37,8 @@ import {
 } from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass-card';
 import { PremiumButton } from '@/components/ui/premium-button';
+import { ImageUpload } from '@/components/ui/ImageUpload';
+import { ContextualImageManager } from '@/components/ui/ContextualImageManager';
 import { useAuth } from '@/contexts/AuthContext';
 import type { TimeSlot, Service, Testimonial, Appointment, CMSContent } from '@/types';
 import {
@@ -55,10 +58,148 @@ import {
   updateSiteContent,
   updateSandraData as updateSandraDataFS,
   updateCentroData as updateCentroDataFS,
+  getUsers,
+  addActivityLog,
 } from '@/lib/firestore';
 import { cn } from '@/lib/utils';
+import type { UserProfile } from '@/types';
+// --- Galería Tab: fetches live from Cloudinary ---
+interface CloudinaryResource {
+  public_id: string;
+  url: string;
+  resource_type: 'image' | 'video';
+  format: string;
+  width: number;
+  height: number;
+  folder: string;
+}
 
-type TabType = 'dashboard' | 'appointments' | 'services' | 'testimonials' | 'cms-sandra' | 'cms-centro' | 'cms-contacto';
+function GaleriaTab() {
+  const [resources, setResources] = useState<CloudinaryResource[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
+
+  const fetchResources = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/images?folder=Galeria');
+      const data = await res.json();
+      setResources(data.images || []);
+    } catch (err) {
+      console.error('Error fetching gallery:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchResources(); }, []);
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('folder', 'Galeria');
+      const res = await fetch('/api/upload', { method: 'POST', body: formData });
+      if (res.ok) {
+        await fetchResources();
+      }
+    } catch (err) {
+      console.error('Upload error:', err);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const getVideoThumbnail = (url: string) => {
+    // Cloudinary auto-generates video thumbnails by changing extension to .jpg
+    return url.replace(/\.(mp4|mov|avi|webm)$/i, '.jpg');
+  };
+
+  return (
+    <motion.div
+      key="Galeria"
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -20 }}
+    >
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-2xl font-bold text-ivory">Galería Pública</h1>
+        <div className="flex gap-3">
+          <label className="cursor-pointer">
+            <input type="file" accept="image/*,video/*" className="hidden" onChange={handleUpload} />
+            <PremiumButton variant="cta" icon={<Plus className="w-4 h-4" />} onClick={() => { }}>
+              {uploading ? 'Subiendo...' : 'Subir archivo'}
+            </PremiumButton>
+          </label>
+          <PremiumButton variant="outline" icon={<RefreshCw className="w-4 h-4" />} onClick={fetchResources}>
+            Actualizar
+          </PremiumButton>
+        </div>
+      </div>
+
+      <GlassCard className="p-6">
+        <h2 className="text-lg font-semibold text-ivory mb-2 flex items-center gap-2">
+          <ImageIcon className="w-5 h-5 text-accent" />
+          Contenido de Cloudinary ({resources.length} archivos)
+        </h2>
+        <p className="text-sm text-muted-foreground mb-4">
+          Estos archivos se cargan en tiempo real desde Cloudinary. Sube nuevos o gestionalos desde el panel de Cloudinary.
+        </p>
+
+        {loading ? (
+          <div className="flex items-center justify-center py-12">
+            <RefreshCw className="w-6 h-6 animate-spin text-accent" />
+            <span className="ml-3 text-muted-foreground">Cargando desde Cloudinary...</span>
+          </div>
+        ) : resources.length === 0 ? (
+          <div className="text-center py-12 text-muted-foreground">
+            <ImageIcon className="w-12 h-12 mx-auto mb-4 opacity-50" />
+            <p>No hay archivos en la carpeta Galería de Cloudinary</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+            {resources.map((resource) => (
+              <div
+                key={resource.public_id}
+                className="relative group rounded-xl overflow-hidden border border-border aspect-square bg-muted/20"
+              >
+                {resource.resource_type === 'video' ? (
+                  <>
+                    <img
+                      src={getVideoThumbnail(resource.url)}
+                      alt={resource.public_id}
+                      className="w-full h-full object-cover"
+                    />
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <div className="w-12 h-12 rounded-full bg-obsidian/70 flex items-center justify-center border-2 border-white/30">
+                        <div className="w-0 h-0 border-t-[8px] border-t-transparent border-l-[14px] border-l-white border-b-[8px] border-b-transparent ml-1" />
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <img
+                    src={resource.url}
+                    alt={resource.public_id}
+                    className="w-full h-full object-cover"
+                  />
+                )}
+                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-obsidian/80 to-transparent p-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <p className="text-xs text-white truncate">{resource.public_id.split('/').pop()}</p>
+                  <p className="text-[10px] text-white/60 uppercase">{resource.resource_type} · {resource.format}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </GlassCard>
+    </motion.div>
+  );
+}
+
+type TabType = 'Inicio' | 'appointments' | 'clients' | 'services' | 'testimonials' | 'Sandra' | 'Centro' | 'Galeria' | 'Contacto';
 type StatusFilter = 'all' | 'pending' | 'approved' | 'rejected' | 'alternative';
 
 const statusConfig = {
@@ -105,12 +246,16 @@ const timeSlots = [
 export default function AdminPage() {
   const { user, userProfile, loading: authLoading, login, logout, isAdmin } = useAuth();
 
+  // Helper: check if a URL is a valid remote image (not a stale local path)
+  const isValidImageUrl = (url?: string) => url && url.startsWith('http');
+
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [services, setServices] = useState<Service[]>([]);
   const [testimonials, setTestimonials] = useState<Testimonial[]>([]);
+  const [clients, setClients] = useState<UserProfile[]>([]);
   const [cmsContent, setCmsContent] = useState<CMSContent | null>(null);
 
-  const [activeTab, setActiveTab] = useState<TabType>('dashboard');
+  const [activeTab, setActiveTab] = useState<TabType>('Inicio');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [showAlternativeModal, setShowAlternativeModal] = useState(false);
   const [alternativeSlot, setAlternativeSlot] = useState<TimeSlot>({ date: '', time: '' });
@@ -135,6 +280,13 @@ export default function AdminPage() {
     rating: 5,
   });
 
+  // Image Manager State
+  const [activeImageManager, setActiveImageManager] = useState<{
+    folder: string;
+    currentUrl?: string;
+    onSelect: (url: string) => void;
+  } | null>(null);
+
   // Autenticación admin
   const [loginForm, setLoginForm] = useState({ email: '', password: '' });
   const [loginError, setLoginError] = useState('');
@@ -142,15 +294,17 @@ export default function AdminPage() {
 
   // Cargar datos desde Firestore
   const refreshData = async () => {
-    const [appts, svcs, tests, cms] = await Promise.all([
+    const [appts, svcs, tests, cms, usersList] = await Promise.all([
       getAppointments(),
       getServices(),
       getTestimonials(),
       getSiteContent(),
+      getUsers(),
     ]);
     setAppointments(appts);
     setServices(svcs);
     setTestimonials(tests);
+    setClients(usersList);
     if (cms) {
       setCmsContent(cms);
       setEditedContent(cms);
@@ -159,6 +313,7 @@ export default function AdminPage() {
 
   useEffect(() => {
     if (isAdmin) {
+      // eslint-disable-next-line
       refreshData().catch(console.error);
     }
   }, [isAdmin]);
@@ -195,6 +350,7 @@ export default function AdminPage() {
   // Manejar actualización de estado
   const handleStatusUpdate = async (id: string, status: 'pending' | 'approved' | 'rejected' | 'alternative', altSlot?: TimeSlot) => {
     await updateAppointmentStatusFS(id, status, altSlot);
+    await addActivityLog({ action: `appointment_${status}`, adminEmail: user?.email || 'unknown', details: `Cita ID: ${id}` });
     await refreshData();
     setShowAlternativeModal(false);
     setAlternativeSlot({ date: '', time: '' });
@@ -205,6 +361,7 @@ export default function AdminPage() {
   const handleSaveCMS = async () => {
     if (!editedContent) return;
     await updateSiteContent(editedContent);
+    await addActivityLog({ action: 'cms_contacto_updated', adminEmail: user?.email || 'unknown' });
     await refreshData();
     alert('✅ Cambios guardados correctamente');
   };
@@ -213,6 +370,7 @@ export default function AdminPage() {
   const handleSaveSandra = async () => {
     if (!editedContent) return;
     await updateSandraDataFS(editedContent.sandra);
+    await addActivityLog({ action: 'cms_sandra_updated', adminEmail: user?.email || 'unknown' });
     await refreshData();
     alert('✅ Datos de Sandra actualizados');
   };
@@ -221,6 +379,7 @@ export default function AdminPage() {
   const handleSaveCentro = async () => {
     if (!editedContent) return;
     await updateCentroDataFS(editedContent.centro);
+    await addActivityLog({ action: 'cms_centro_updated', adminEmail: user?.email || 'unknown' });
     await refreshData();
     alert('✅ Datos del Centro actualizados');
   };
@@ -228,7 +387,8 @@ export default function AdminPage() {
   // Manejar guardado de servicio
   const handleSaveService = async () => {
     if (editingService) {
-      if (editingService.id.startsWith('new-')) {
+      const isNew = editingService.id.startsWith('new-');
+      if (isNew) {
         await addServiceFS({
           title: editingService.title,
           description: editingService.description,
@@ -240,6 +400,7 @@ export default function AdminPage() {
       } else {
         await updateServiceFS(editingService.id, editingService);
       }
+      await addActivityLog({ action: isNew ? 'service_created' : 'service_updated', adminEmail: user?.email || 'unknown', details: editingService.title });
       await refreshData();
       setEditingService(null);
     }
@@ -248,7 +409,8 @@ export default function AdminPage() {
   // Manejar guardado de testimonio
   const handleSaveTestimonial = async () => {
     if (editingTestimonial) {
-      if (editingTestimonial.id.startsWith('new-')) {
+      const isNew = editingTestimonial.id.startsWith('new-');
+      if (isNew) {
         await addTestimonialFS({
           name: editingTestimonial.name,
           role: editingTestimonial.role,
@@ -258,6 +420,7 @@ export default function AdminPage() {
       } else {
         await updateTestimonialFS(editingTestimonial.id, editingTestimonial);
       }
+      await addActivityLog({ action: isNew ? 'testimonial_created' : 'testimonial_updated', adminEmail: user?.email || 'unknown', details: editingTestimonial.name });
       await refreshData();
       setEditingTestimonial(null);
     }
@@ -381,10 +544,12 @@ export default function AdminPage() {
             <p className="text-xs text-muted-foreground uppercase tracking-wider mb-3 px-3">Principal</p>
 
             <button
-              onClick={() => setActiveTab('dashboard')}
+              onClick={() => setActiveTab('Inicio')}
               className={cn(
                 'w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-left',
-                activeTab === 'dashboard' ? 'bg-accent/20 text-accent' : 'text-muted-foreground hover:bg-muted hover:text-ivory'
+                activeTab === 'Inicio'
+                  ? 'bg-emerald/20 text-emerald border border-emerald/30 shadow-lg shadow-emerald/10'
+                  : 'text-muted-foreground hover:bg-muted/50 hover:text-ivory'
               )}
             >
               <BarChart3 className="w-5 h-5" />
@@ -395,7 +560,9 @@ export default function AdminPage() {
               onClick={() => setActiveTab('appointments')}
               className={cn(
                 'w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-left',
-                activeTab === 'appointments' ? 'bg-accent/20 text-accent' : 'text-muted-foreground hover:bg-muted hover:text-ivory'
+                activeTab === 'appointments'
+                  ? 'bg-emerald/20 text-emerald border border-emerald/30 shadow-lg shadow-emerald/10'
+                  : 'text-muted-foreground hover:bg-muted/50 hover:text-ivory'
               )}
             >
               <Calendar className="w-5 h-5" />
@@ -407,13 +574,28 @@ export default function AdminPage() {
               )}
             </button>
 
+            <button
+              onClick={() => setActiveTab('clients')}
+              className={cn(
+                'w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-left',
+                activeTab === 'clients'
+                  ? 'bg-emerald/20 text-emerald border border-emerald/30 shadow-lg shadow-emerald/10'
+                  : 'text-muted-foreground hover:bg-muted/50 hover:text-ivory'
+              )}
+            >
+              <Users className="w-5 h-5" />
+              <span className="font-medium">Clientes</span>
+            </button>
+
             <p className="text-xs text-muted-foreground uppercase tracking-wider mt-6 mb-3 px-3">Gestión</p>
 
             <button
               onClick={() => setActiveTab('services')}
               className={cn(
                 'w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-left',
-                activeTab === 'services' ? 'bg-accent/20 text-accent' : 'text-muted-foreground hover:bg-muted hover:text-ivory'
+                activeTab === 'services'
+                  ? 'bg-emerald/20 text-emerald border border-emerald/30 shadow-lg shadow-emerald/10'
+                  : 'text-muted-foreground hover:bg-muted/50 hover:text-ivory'
               )}
             >
               <Award className="w-5 h-5" />
@@ -425,7 +607,9 @@ export default function AdminPage() {
               onClick={() => setActiveTab('testimonials')}
               className={cn(
                 'w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-left',
-                activeTab === 'testimonials' ? 'bg-accent/20 text-accent' : 'text-muted-foreground hover:bg-muted hover:text-ivory'
+                activeTab === 'testimonials'
+                  ? 'bg-emerald/20 text-emerald border border-emerald/30 shadow-lg shadow-emerald/10'
+                  : 'text-muted-foreground hover:bg-muted/50 hover:text-ivory'
               )}
             >
               <Star className="w-5 h-5" />
@@ -436,10 +620,12 @@ export default function AdminPage() {
             <p className="text-xs text-muted-foreground uppercase tracking-wider mt-6 mb-3 px-3">CMS</p>
 
             <button
-              onClick={() => setActiveTab('cms-sandra')}
+              onClick={() => setActiveTab('Sandra')}
               className={cn(
                 'w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-left',
-                activeTab === 'cms-sandra' ? 'bg-accent/20 text-accent' : 'text-muted-foreground hover:bg-muted hover:text-ivory'
+                activeTab === 'Sandra'
+                  ? 'bg-emerald/20 text-emerald border border-emerald/30 shadow-lg shadow-emerald/10'
+                  : 'text-muted-foreground hover:bg-muted/50 hover:text-ivory'
               )}
             >
               <User className="w-5 h-5" />
@@ -447,10 +633,12 @@ export default function AdminPage() {
             </button>
 
             <button
-              onClick={() => setActiveTab('cms-centro')}
+              onClick={() => setActiveTab('Centro')}
               className={cn(
                 'w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-left',
-                activeTab === 'cms-centro' ? 'bg-accent/20 text-accent' : 'text-muted-foreground hover:bg-muted hover:text-ivory'
+                activeTab === 'Centro'
+                  ? 'bg-emerald/20 text-emerald border border-emerald/30 shadow-lg shadow-emerald/10'
+                  : 'text-muted-foreground hover:bg-muted/50 hover:text-ivory'
               )}
             >
               <MapPin className="w-5 h-5" />
@@ -458,10 +646,25 @@ export default function AdminPage() {
             </button>
 
             <button
-              onClick={() => setActiveTab('cms-contacto')}
+              onClick={() => setActiveTab('Galeria')}
               className={cn(
                 'w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-left',
-                activeTab === 'cms-contacto' ? 'bg-accent/20 text-accent' : 'text-muted-foreground hover:bg-muted hover:text-ivory'
+                activeTab === 'Galeria'
+                  ? 'bg-emerald/20 text-emerald border border-emerald/30 shadow-lg shadow-emerald/10'
+                  : 'text-muted-foreground hover:bg-muted/50 hover:text-ivory'
+              )}
+            >
+              <ImageIcon className="w-5 h-5" />
+              <span className="font-medium">Galeria</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('Contacto')}
+              className={cn(
+                'w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-left',
+                activeTab === 'Contacto'
+                  ? 'bg-emerald/20 text-emerald border border-emerald/30 shadow-lg shadow-emerald/10'
+                  : 'text-muted-foreground hover:bg-muted/50 hover:text-ivory'
               )}
             >
               <Globe className="w-5 h-5" />
@@ -475,9 +678,9 @@ export default function AdminPage() {
               {/* ============================================
                   DASHBOARD
                   ============================================ */}
-              {activeTab === 'dashboard' && (
+              {activeTab === 'Inicio' && (
                 <motion.div
-                  key="dashboard"
+                  key="Inicio"
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -20 }}
@@ -782,6 +985,68 @@ export default function AdminPage() {
               )}
 
               {/* ============================================
+                  CLIENTS
+                  ============================================ */}
+              {activeTab === 'clients' && (
+                <motion.div
+                  key="clients"
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                >
+                  <div className="flex items-center justify-between mb-6">
+                    <h1 className="text-2xl font-bold text-ivory">Gestión de Clientes</h1>
+                    <div className="flex gap-2 text-sm text-muted-foreground">
+                      Total: <span className="text-ivory font-semibold">{clients.length}</span>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4">
+                    {clients.map((client) => (
+                      <GlassCard key={client.uid} className="p-6">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                          <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 rounded-full bg-accent/20 flex items-center justify-center">
+                              <User className="w-6 h-6 text-accent" />
+                            </div>
+                            <div>
+                              <h3 className="font-semibold text-ivory">{client.name}</h3>
+                              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                <Mail className="w-3.5 h-3.5" />
+                                {client.email}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
+                            <div className="flex items-center gap-2">
+                              <Phone className="w-4 h-4" />
+                              {client.phone}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Calendar className="w-4 h-4" />
+                              Unido el {client.createdAt ? new Date(client.createdAt).toLocaleDateString() : 'Fecha desconocida'}
+                            </div>
+                            <span className={cn(
+                              "px-2 py-0.5 rounded-full text-xs font-medium uppercase tracking-tight",
+                              client.role === 'admin' ? "bg-accent/20 text-accent border border-accent/30" : "bg-emerald/10 text-emerald-light border border-emerald/20"
+                            )}>
+                              {client.role === 'admin' ? 'Administrador' : 'Cliente'}
+                            </span>
+                          </div>
+                        </div>
+                      </GlassCard>
+                    ))}
+                    {clients.length === 0 && (
+                      <GlassCard className="p-12 text-center">
+                        <Users className="w-12 h-12 mx-auto mb-4 text-muted-foreground opacity-30" />
+                        <p className="text-muted-foreground">No hay clientes registrados.</p>
+                      </GlassCard>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+
+              {/* ============================================
                   SERVICES
                   ============================================ */}
               {activeTab === 'services' && (
@@ -881,6 +1146,7 @@ export default function AdminPage() {
                         role: '',
                         content: '',
                         rating: 5,
+                        approved: false,
                       })}
                     >
                       Nuevo Testimonio
@@ -947,12 +1213,13 @@ export default function AdminPage() {
                 </motion.div>
               )}
 
+
               {/* ============================================
                   CMS - SANDRA
                   ============================================ */}
-              {activeTab === 'cms-sandra' && (
+              {activeTab === 'Sandra' && (
                 <motion.div
-                  key="cms-sandra"
+                  key="Sandra"
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -20 }}
@@ -968,16 +1235,43 @@ export default function AdminPage() {
                     {/* Basic Info */}
                     <GlassCard className="p-6">
                       <h2 className="text-lg font-semibold text-ivory mb-4">Información Básica</h2>
+                      <div className="mb-6">
+                        <label className="block text-sm text-muted-foreground mb-2">Foto de Perfil</label>
+                        {isValidImageUrl(editedContent?.sandra?.image) ? (
+                          <img src={editedContent!.sandra!.image} alt="Sandra" className="w-32 h-32 object-cover rounded-xl mb-3 border border-border" />
+                        ) : (
+                          <div className="w-32 h-32 rounded-xl mb-3 border border-border bg-muted/30 flex items-center justify-center">
+                            <ImageIcon className="w-8 h-8 text-muted-foreground opacity-50" />
+                          </div>
+                        )}
+                        <PremiumButton
+                          variant="outline"
+                          size="sm"
+                          icon={<ImageIcon className="w-4 h-4" />}
+                          onClick={() => setActiveImageManager({
+                            folder: 'Sandra',
+                            currentUrl: editedContent?.sandra?.image || undefined,
+                            onSelect: (url) => setEditedContent(prev => prev?.sandra ? { ...prev, sandra: { ...prev.sandra, image: url } } as CMSContent : prev)
+                          })}
+                        >
+                          Cambiar Foto de Perfil
+                        </PremiumButton>
+                      </div>
                       <div className="grid sm:grid-cols-2 gap-4">
                         <div>
                           <label className="block text-sm text-muted-foreground mb-2">Nombre</label>
                           <input
                             type="text"
-                            value={editedContent.sandra?.name || ''}
-                            onChange={(e) => setEditedContent({
-                              ...editedContent,
-                              sandra: { ...editedContent.sandra, name: e.target.value }
-                            })}
+                            value={editedContent?.sandra?.name || ''}
+                            onChange={(e) => {
+                              setEditedContent((prev) => {
+                                if (!prev?.sandra) return prev;
+                                return {
+                                  ...prev,
+                                  sandra: { ...prev.sandra, name: e.target.value }
+                                } as CMSContent;
+                              });
+                            }}
                             className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
                           />
                         </div>
@@ -985,11 +1279,16 @@ export default function AdminPage() {
                           <label className="block text-sm text-muted-foreground mb-2">Título</label>
                           <input
                             type="text"
-                            value={editedContent.sandra?.title || ''}
-                            onChange={(e) => setEditedContent({
-                              ...editedContent,
-                              sandra: { ...editedContent.sandra, title: e.target.value }
-                            })}
+                            value={editedContent?.sandra?.title || ''}
+                            onChange={(e) => {
+                              setEditedContent((prev) => {
+                                if (!prev?.sandra) return prev;
+                                return {
+                                  ...prev,
+                                  sandra: { ...prev.sandra, title: e.target.value }
+                                } as CMSContent;
+                              });
+                            }}
                             className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
                           />
                         </div>
@@ -997,11 +1296,16 @@ export default function AdminPage() {
                       <div className="mt-4">
                         <label className="block text-sm text-muted-foreground mb-2">Biografía</label>
                         <textarea
-                          value={editedContent.sandra?.bio || ''}
-                          onChange={(e) => setEditedContent({
-                            ...editedContent,
-                            sandra: { ...editedContent.sandra, bio: e.target.value }
-                          })}
+                          value={editedContent?.sandra?.bio || ''}
+                          onChange={(e) => {
+                            setEditedContent((prev) => {
+                              if (!prev?.sandra) return prev;
+                              return {
+                                ...prev,
+                                sandra: { ...prev.sandra, bio: e.target.value }
+                              } as CMSContent;
+                            });
+                          }}
                           rows={4}
                           className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light resize-none"
                         />
@@ -1012,27 +1316,33 @@ export default function AdminPage() {
                     <GlassCard className="p-6">
                       <h2 className="text-lg font-semibold text-ivory mb-4">Logros Destacados</h2>
                       <div className="space-y-3">
-                        {(editedContent.sandra?.achievements || []).map((achievement, index) => (
+                        {(editedContent?.sandra?.achievements || []).map((achievement, index) => (
                           <div key={index} className="flex gap-2">
                             <input
                               type="text"
                               value={achievement}
                               onChange={(e) => {
-                                const newAchievements = [...(editedContent.sandra?.achievements || [])];
-                                newAchievements[index] = e.target.value;
-                                setEditedContent({
-                                  ...editedContent,
-                                  sandra: { ...editedContent.sandra, achievements: newAchievements }
+                                setEditedContent((prev) => {
+                                  if (!prev?.sandra) return prev;
+                                  const newAchievements = [...(prev.sandra.achievements || [])];
+                                  newAchievements[index] = e.target.value;
+                                  return {
+                                    ...prev,
+                                    sandra: { ...prev.sandra, achievements: newAchievements }
+                                  } as CMSContent;
                                 });
                               }}
                               className="flex-1 px-4 py-2 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
                             />
                             <button
                               onClick={() => {
-                                const newAchievements = (editedContent.sandra?.achievements || []).filter((_, i) => i !== index);
-                                setEditedContent({
-                                  ...editedContent,
-                                  sandra: { ...editedContent.sandra, achievements: newAchievements }
+                                setEditedContent((prev) => {
+                                  if (!prev?.sandra) return prev;
+                                  const newAchievements = (prev.sandra.achievements || []).filter((_, i) => i !== index);
+                                  return {
+                                    ...prev,
+                                    sandra: { ...prev.sandra, achievements: newAchievements }
+                                  } as CMSContent;
                                 });
                               }}
                               className="p-2 text-destructive hover:bg-destructive/10 rounded-xl"
@@ -1045,9 +1355,12 @@ export default function AdminPage() {
                           variant="outline"
                           size="sm"
                           icon={<Plus className="w-4 h-4" />}
-                          onClick={() => setEditedContent({
-                            ...editedContent,
-                            sandra: { ...editedContent.sandra, achievements: [...(editedContent.sandra?.achievements || []), ''] }
+                          onClick={() => setEditedContent((prev) => {
+                            if (!prev?.sandra) return prev;
+                            return {
+                              ...prev,
+                              sandra: { ...prev.sandra, achievements: [...(prev.sandra.achievements || []), ''] }
+                            } as CMSContent;
                           })}
                         >
                           Añadir Logro
@@ -1059,27 +1372,33 @@ export default function AdminPage() {
                     <GlassCard className="p-6">
                       <h2 className="text-lg font-semibold text-ivory mb-4">Certificaciones</h2>
                       <div className="space-y-3">
-                        {(editedContent.sandra?.certifications || []).map((cert, index) => (
+                        {(editedContent?.sandra?.certifications || []).map((cert, index) => (
                           <div key={index} className="flex gap-2">
                             <input
                               type="text"
                               value={cert}
                               onChange={(e) => {
-                                const newCerts = [...(editedContent.sandra?.certifications || [])];
-                                newCerts[index] = e.target.value;
-                                setEditedContent({
-                                  ...editedContent,
-                                  sandra: { ...editedContent.sandra, certifications: newCerts }
+                                setEditedContent((prev) => {
+                                  if (!prev?.sandra) return prev;
+                                  const newCerts = [...(prev.sandra.certifications || [])];
+                                  newCerts[index] = e.target.value;
+                                  return {
+                                    ...prev,
+                                    sandra: { ...prev.sandra, certifications: newCerts }
+                                  } as CMSContent;
                                 });
                               }}
                               className="flex-1 px-4 py-2 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
                             />
                             <button
                               onClick={() => {
-                                const newCerts = (editedContent.sandra?.certifications || []).filter((_, i) => i !== index);
-                                setEditedContent({
-                                  ...editedContent,
-                                  sandra: { ...editedContent.sandra, certifications: newCerts }
+                                setEditedContent((prev) => {
+                                  if (!prev?.sandra) return prev;
+                                  const newCerts = (prev.sandra.certifications || []).filter((_, i) => i !== index);
+                                  return {
+                                    ...prev,
+                                    sandra: { ...prev.sandra, certifications: newCerts }
+                                  } as CMSContent;
                                 });
                               }}
                               className="p-2 text-destructive hover:bg-destructive/10 rounded-xl"
@@ -1092,9 +1411,12 @@ export default function AdminPage() {
                           variant="outline"
                           size="sm"
                           icon={<Plus className="w-4 h-4" />}
-                          onClick={() => setEditedContent({
-                            ...editedContent,
-                            sandra: { ...editedContent.sandra, certifications: [...(editedContent.sandra?.certifications || []), ''] }
+                          onClick={() => setEditedContent((prev) => {
+                            if (!prev?.sandra) return prev;
+                            return {
+                              ...prev,
+                              sandra: { ...prev.sandra, certifications: [...(prev.sandra.certifications || []), ''] }
+                            } as CMSContent;
                           })}
                         >
                           Añadir Certificación
@@ -1106,18 +1428,21 @@ export default function AdminPage() {
                     <GlassCard className="p-6">
                       <h2 className="text-lg font-semibold text-ivory mb-4">Timeline Profesional</h2>
                       <div className="space-y-4">
-                        {(editedContent.sandra?.timeline || []).map((item, index) => (
+                        {(editedContent?.sandra?.timeline || []).map((item, index) => (
                           <div key={index} className="p-4 rounded-xl bg-muted/30 border border-border">
                             <div className="grid sm:grid-cols-3 gap-3 mb-3">
                               <input
                                 type="text"
                                 value={item.year}
                                 onChange={(e) => {
-                                  const newTimeline = [...(editedContent.sandra?.timeline || [])];
-                                  newTimeline[index] = { ...newTimeline[index], year: e.target.value };
-                                  setEditedContent({
-                                    ...editedContent,
-                                    sandra: { ...editedContent.sandra, timeline: newTimeline }
+                                  setEditedContent((prev) => {
+                                    if (!prev?.sandra) return prev;
+                                    const newTimeline = [...(prev.sandra.timeline || [])];
+                                    newTimeline[index] = { ...newTimeline[index], year: e.target.value };
+                                    return {
+                                      ...prev,
+                                      sandra: { ...prev.sandra, timeline: newTimeline }
+                                    } as CMSContent;
                                   });
                                 }}
                                 placeholder="Año"
@@ -1127,11 +1452,14 @@ export default function AdminPage() {
                                 type="text"
                                 value={item.title}
                                 onChange={(e) => {
-                                  const newTimeline = [...(editedContent.sandra?.timeline || [])];
-                                  newTimeline[index] = { ...newTimeline[index], title: e.target.value };
-                                  setEditedContent({
-                                    ...editedContent,
-                                    sandra: { ...editedContent.sandra, timeline: newTimeline }
+                                  setEditedContent((prev) => {
+                                    if (!prev?.sandra) return prev;
+                                    const newTimeline = [...(prev.sandra.timeline || [])];
+                                    newTimeline[index] = { ...newTimeline[index], title: e.target.value };
+                                    return {
+                                      ...prev,
+                                      sandra: { ...prev.sandra, timeline: newTimeline }
+                                    } as CMSContent;
                                   });
                                 }}
                                 placeholder="Título"
@@ -1142,11 +1470,14 @@ export default function AdminPage() {
                               <textarea
                                 value={item.description}
                                 onChange={(e) => {
-                                  const newTimeline = [...(editedContent.sandra?.timeline || [])];
-                                  newTimeline[index] = { ...newTimeline[index], description: e.target.value };
-                                  setEditedContent({
-                                    ...editedContent,
-                                    sandra: { ...editedContent.sandra, timeline: newTimeline }
+                                  setEditedContent((prev) => {
+                                    if (!prev?.sandra) return prev;
+                                    const newTimeline = [...(prev.sandra.timeline || [])];
+                                    newTimeline[index] = { ...newTimeline[index], description: e.target.value };
+                                    return {
+                                      ...prev,
+                                      sandra: { ...prev.sandra, timeline: newTimeline }
+                                    } as CMSContent;
                                   });
                                 }}
                                 placeholder="Descripción"
@@ -1155,10 +1486,13 @@ export default function AdminPage() {
                               />
                               <button
                                 onClick={() => {
-                                  const newTimeline = (editedContent.sandra?.timeline || []).filter((_, i) => i !== index);
-                                  setEditedContent({
-                                    ...editedContent,
-                                    sandra: { ...editedContent.sandra, timeline: newTimeline }
+                                  setEditedContent((prev) => {
+                                    if (!prev?.sandra) return prev;
+                                    const newTimeline = (prev.sandra.timeline || []).filter((_, i) => i !== index);
+                                    return {
+                                      ...prev,
+                                      sandra: { ...prev.sandra, timeline: newTimeline }
+                                    } as CMSContent;
                                   });
                                 }}
                                 className="p-2 text-destructive hover:bg-destructive/10 rounded-lg h-fit"
@@ -1172,12 +1506,15 @@ export default function AdminPage() {
                           variant="outline"
                           size="sm"
                           icon={<Plus className="w-4 h-4" />}
-                          onClick={() => setEditedContent({
-                            ...editedContent,
-                            sandra: {
-                              ...editedContent.sandra,
-                              timeline: [...(editedContent.sandra?.timeline || []), { year: '', title: '', description: '' }]
-                            }
+                          onClick={() => setEditedContent((prev) => {
+                            if (!prev?.sandra) return prev;
+                            return {
+                              ...prev,
+                              sandra: {
+                                ...prev.sandra,
+                                timeline: [...(prev.sandra.timeline || []), { year: '', title: '', description: '' }]
+                              }
+                            } as CMSContent;
                           })}
                         >
                           Añadir Año al Timeline
@@ -1191,9 +1528,9 @@ export default function AdminPage() {
               {/* ============================================
                   CMS - CENTRO
                   ============================================ */}
-              {activeTab === 'cms-centro' && (
+              {activeTab === 'Centro' && (
                 <motion.div
-                  key="cms-centro"
+                  key="Centro"
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -20 }}
@@ -1214,11 +1551,16 @@ export default function AdminPage() {
                           <label className="block text-sm text-muted-foreground mb-2">Título</label>
                           <input
                             type="text"
-                            value={editedContent.centro?.title || ''}
-                            onChange={(e) => setEditedContent({
-                              ...editedContent,
-                              centro: { ...editedContent.centro, title: e.target.value }
-                            })}
+                            value={editedContent?.centro?.title || ''}
+                            onChange={(e) => {
+                              setEditedContent((prev) => {
+                                if (!prev) return prev;
+                                return {
+                                  ...prev,
+                                  centro: { ...prev.centro, title: e.target.value }
+                                } as CMSContent;
+                              });
+                            }}
                             className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
                           />
                         </div>
@@ -1226,22 +1568,32 @@ export default function AdminPage() {
                           <label className="block text-sm text-muted-foreground mb-2">Subtítulo</label>
                           <input
                             type="text"
-                            value={editedContent.centro?.subtitle || ''}
-                            onChange={(e) => setEditedContent({
-                              ...editedContent,
-                              centro: { ...editedContent.centro, subtitle: e.target.value }
-                            })}
+                            value={editedContent?.centro?.subtitle || ''}
+                            onChange={(e) => {
+                              setEditedContent((prev) => {
+                                if (!prev) return prev;
+                                return {
+                                  ...prev,
+                                  centro: { ...prev.centro, subtitle: e.target.value }
+                                } as CMSContent;
+                              });
+                            }}
                             className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
                           />
                         </div>
                         <div>
                           <label className="block text-sm text-muted-foreground mb-2">Descripción</label>
                           <textarea
-                            value={editedContent.centro?.description || ''}
-                            onChange={(e) => setEditedContent({
-                              ...editedContent,
-                              centro: { ...editedContent.centro, description: e.target.value }
-                            })}
+                            value={editedContent?.centro?.description || ''}
+                            onChange={(e) => {
+                              setEditedContent((prev) => {
+                                if (!prev) return prev;
+                                return {
+                                  ...prev,
+                                  centro: { ...prev.centro, description: e.target.value }
+                                } as CMSContent;
+                              });
+                            }}
                             rows={3}
                             className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light resize-none"
                           />
@@ -1257,14 +1609,19 @@ export default function AdminPage() {
                           <label className="block text-sm text-muted-foreground mb-2">Lunes a Viernes</label>
                           <input
                             type="text"
-                            value={editedContent.centro?.schedule?.weekdays || ''}
-                            onChange={(e) => setEditedContent({
-                              ...editedContent,
-                              centro: {
-                                ...editedContent.centro,
-                                schedule: { ...editedContent.centro.schedule, weekdays: e.target.value }
-                              }
-                            })}
+                            value={editedContent?.centro?.schedule?.weekdays || ''}
+                            onChange={(e) => {
+                              setEditedContent((prev) => {
+                                if (!prev?.centro) return prev;
+                                return {
+                                  ...prev,
+                                  centro: {
+                                    ...prev.centro,
+                                    schedule: { ...prev.centro.schedule, weekdays: e.target.value }
+                                  }
+                                } as CMSContent;
+                              });
+                            }}
                             className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
                             placeholder="7:00 - 21:00"
                           />
@@ -1273,14 +1630,19 @@ export default function AdminPage() {
                           <label className="block text-sm text-muted-foreground mb-2">Sábados</label>
                           <input
                             type="text"
-                            value={editedContent.centro?.schedule?.saturday || ''}
-                            onChange={(e) => setEditedContent({
-                              ...editedContent,
-                              centro: {
-                                ...editedContent.centro,
-                                schedule: { ...editedContent.centro.schedule, saturday: e.target.value }
-                              }
-                            })}
+                            value={editedContent?.centro?.schedule?.saturday || ''}
+                            onChange={(e) => {
+                              setEditedContent((prev) => {
+                                if (!prev?.centro) return prev;
+                                return {
+                                  ...prev,
+                                  centro: {
+                                    ...prev.centro,
+                                    schedule: { ...prev.centro.schedule, saturday: e.target.value }
+                                  }
+                                } as CMSContent;
+                              });
+                            }}
                             className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
                             placeholder="9:00 - 14:00"
                           />
@@ -1292,18 +1654,21 @@ export default function AdminPage() {
                     <GlassCard className="p-6">
                       <h2 className="text-lg font-semibold text-ivory mb-4">Características</h2>
                       <div className="space-y-4">
-                        {(editedContent.centro?.features || []).map((feature, index) => (
+                        {(editedContent?.centro?.features || []).map((feature, index) => (
                           <div key={index} className="p-4 rounded-xl bg-muted/30 border border-border">
                             <div className="grid sm:grid-cols-3 gap-3">
                               <input
                                 type="text"
                                 value={feature.icon}
                                 onChange={(e) => {
-                                  const newFeatures = [...(editedContent.centro?.features || [])];
-                                  newFeatures[index] = { ...newFeatures[index], icon: e.target.value };
-                                  setEditedContent({
-                                    ...editedContent,
-                                    centro: { ...editedContent.centro, features: newFeatures }
+                                  setEditedContent((prev) => {
+                                    if (!prev?.centro) return prev;
+                                    const newFeatures = [...(prev.centro.features || [])];
+                                    newFeatures[index] = { ...newFeatures[index], icon: e.target.value };
+                                    return {
+                                      ...prev,
+                                      centro: { ...prev.centro, features: newFeatures }
+                                    } as CMSContent;
                                   });
                                 }}
                                 placeholder="Icono (Sparkles, Shield, Zap, Users)"
@@ -1313,11 +1678,14 @@ export default function AdminPage() {
                                 type="text"
                                 value={feature.title}
                                 onChange={(e) => {
-                                  const newFeatures = [...(editedContent.centro?.features || [])];
-                                  newFeatures[index] = { ...newFeatures[index], title: e.target.value };
-                                  setEditedContent({
-                                    ...editedContent,
-                                    centro: { ...editedContent.centro, features: newFeatures }
+                                  setEditedContent((prev) => {
+                                    if (!prev?.centro) return prev;
+                                    const newFeatures = [...(prev.centro.features || [])];
+                                    newFeatures[index] = { ...newFeatures[index], title: e.target.value };
+                                    return {
+                                      ...prev,
+                                      centro: { ...prev.centro, features: newFeatures }
+                                    } as CMSContent;
                                   });
                                 }}
                                 placeholder="Título"
@@ -1328,11 +1696,14 @@ export default function AdminPage() {
                                   type="text"
                                   value={feature.description}
                                   onChange={(e) => {
-                                    const newFeatures = [...(editedContent.centro?.features || [])];
-                                    newFeatures[index] = { ...newFeatures[index], description: e.target.value };
-                                    setEditedContent({
-                                      ...editedContent,
-                                      centro: { ...editedContent.centro, features: newFeatures }
+                                    setEditedContent((prev) => {
+                                      if (!prev?.centro) return prev;
+                                      const newFeatures = [...(prev.centro.features || [])];
+                                      newFeatures[index] = { ...newFeatures[index], description: e.target.value };
+                                      return {
+                                        ...prev,
+                                        centro: { ...prev.centro, features: newFeatures }
+                                      } as CMSContent;
                                     });
                                   }}
                                   placeholder="Descripción"
@@ -1340,10 +1711,13 @@ export default function AdminPage() {
                                 />
                                 <button
                                   onClick={() => {
-                                    const newFeatures = (editedContent.centro?.features || []).filter((_, i) => i !== index);
-                                    setEditedContent({
-                                      ...editedContent,
-                                      centro: { ...editedContent.centro, features: newFeatures }
+                                    setEditedContent((prev) => {
+                                      if (!prev?.centro) return prev;
+                                      const newFeatures = (prev.centro.features || []).filter((_, i) => i !== index);
+                                      return {
+                                        ...prev,
+                                        centro: { ...prev.centro, features: newFeatures }
+                                      } as CMSContent;
                                     });
                                   }}
                                   className="p-2 text-destructive hover:bg-destructive/10 rounded-lg"
@@ -1358,12 +1732,15 @@ export default function AdminPage() {
                           variant="outline"
                           size="sm"
                           icon={<Plus className="w-4 h-4" />}
-                          onClick={() => setEditedContent({
-                            ...editedContent,
-                            centro: {
-                              ...editedContent.centro,
-                              features: [...(editedContent.centro?.features || []), { icon: '', title: '', description: '' }]
-                            }
+                          onClick={() => setEditedContent((prev) => {
+                            if (!prev?.centro) return prev;
+                            return {
+                              ...prev,
+                              centro: {
+                                ...prev.centro,
+                                features: [...(prev.centro.features || []), { icon: '', title: '', description: '' }]
+                              }
+                            } as CMSContent;
                           })}
                         >
                           Añadir Característica
@@ -1375,11 +1752,18 @@ export default function AdminPage() {
               )}
 
               {/* ============================================
+                  CMS - GALERÍA (Cloudinary-native)
+                  ============================================ */}
+              {activeTab === 'Galeria' && (
+                <GaleriaTab />
+              )}
+
+              {/* ============================================
                   CMS - CONTACTO & HERO
                   ============================================ */}
-              {activeTab === 'cms-contacto' && (
+              {activeTab === 'Contacto' && (
                 <motion.div
-                  key="cms-contacto"
+                  key="Contacto"
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -20 }}
@@ -1399,20 +1783,52 @@ export default function AdminPage() {
                         Sección Hero
                       </h2>
                       <div className="space-y-4">
+                        <div className="mb-6">
+                          <label className="block text-sm text-muted-foreground mb-2">Imagen de Fondo (Hero)</label>
+                          {isValidImageUrl(editedContent?.heroImage) ? (
+                            <img src={editedContent!.heroImage} alt="Hero" className="w-full max-w-sm h-32 object-cover rounded-xl mb-3 border border-border" />
+                          ) : (
+                            <div className="w-full max-w-sm h-32 rounded-xl mb-3 border border-border bg-muted/30 flex items-center justify-center">
+                              <ImageIcon className="w-8 h-8 text-muted-foreground opacity-50" />
+                            </div>
+                          )}
+                          <PremiumButton
+                            variant="outline"
+                            size="sm"
+                            icon={<ImageIcon className="w-4 h-4" />}
+                            onClick={() => setActiveImageManager({
+                              folder: 'Hero',
+                              currentUrl: editedContent?.heroImage || undefined,
+                              onSelect: (url) => setEditedContent(prev => prev ? { ...prev, heroImage: url } as CMSContent : prev)
+                            })}
+                          >
+                            Cambiar Imagen Hero
+                          </PremiumButton>
+                        </div>
                         <div>
                           <label className="block text-sm text-muted-foreground mb-2">Título Principal</label>
                           <input
                             type="text"
-                            value={editedContent.heroTitle}
-                            onChange={(e) => setEditedContent({ ...editedContent, heroTitle: e.target.value })}
+                            value={editedContent?.heroTitle || ''}
+                            onChange={(e) => {
+                              setEditedContent((prev) => {
+                                if (!prev) return prev;
+                                return { ...prev, heroTitle: e.target.value } as CMSContent;
+                              });
+                            }}
                             className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
                           />
                         </div>
                         <div>
                           <label className="block text-sm text-muted-foreground mb-2">Subtítulo</label>
                           <textarea
-                            value={editedContent.heroSubtitle}
-                            onChange={(e) => setEditedContent({ ...editedContent, heroSubtitle: e.target.value })}
+                            value={editedContent?.heroSubtitle || ''}
+                            onChange={(e) => {
+                              setEditedContent((prev) => {
+                                if (!prev) return prev;
+                                return { ...prev, heroSubtitle: e.target.value } as CMSContent;
+                              });
+                            }}
                             rows={3}
                             className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light resize-none"
                           />
@@ -1421,9 +1837,74 @@ export default function AdminPage() {
                           <label className="block text-sm text-muted-foreground mb-2">Texto Botón CTA</label>
                           <input
                             type="text"
-                            value={editedContent.heroCTA}
-                            onChange={(e) => setEditedContent({ ...editedContent, heroCTA: e.target.value })}
+                            value={editedContent?.heroCTA || ''}
+                            onChange={(e) => {
+                              setEditedContent((prev) => {
+                                if (!prev) return prev;
+                                return { ...prev, heroCTA: e.target.value } as CMSContent;
+                              });
+                            }}
                             className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
+                          />
+                        </div>
+                      </div>
+                    </GlassCard>
+
+                    {/* About Section */}
+                    <GlassCard className="p-6">
+                      <h2 className="text-lg font-semibold text-ivory mb-4 flex items-center gap-2">
+                        <ImageIcon className="w-5 h-5 text-accent" />
+                        Sección Sobre Nosotros
+                      </h2>
+                      <div className="space-y-4">
+                        <div className="mb-6">
+                          <label className="block text-sm text-muted-foreground mb-2">Imagen Representativa</label>
+                          {isValidImageUrl(editedContent?.aboutImage) ? (
+                            <img src={editedContent!.aboutImage} alt="About" className="w-full max-w-sm h-32 object-cover rounded-xl mb-3 border border-border" />
+                          ) : (
+                            <div className="w-full max-w-sm h-32 rounded-xl mb-3 border border-border bg-muted/30 flex items-center justify-center">
+                              <ImageIcon className="w-8 h-8 text-muted-foreground opacity-50" />
+                            </div>
+                          )}
+                          <PremiumButton
+                            variant="outline"
+                            size="sm"
+                            icon={<ImageIcon className="w-4 h-4" />}
+                            onClick={() => setActiveImageManager({
+                              folder: 'Nosotros',
+                              currentUrl: editedContent?.aboutImage || undefined,
+                              onSelect: (url) => setEditedContent(prev => prev ? { ...prev, aboutImage: url } as CMSContent : prev)
+                            })}
+                          >
+                            Cambiar Imagen
+                          </PremiumButton>
+                        </div>
+                        <div>
+                          <label className="block text-sm text-muted-foreground mb-2">Título Sobre Nosotros</label>
+                          <input
+                            type="text"
+                            value={editedContent?.aboutTitle || ''}
+                            onChange={(e) => {
+                              setEditedContent((prev) => {
+                                if (!prev) return prev;
+                                return { ...prev, aboutTitle: e.target.value } as CMSContent;
+                              });
+                            }}
+                            className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm text-muted-foreground mb-2">Texto Principal</label>
+                          <textarea
+                            value={editedContent?.aboutText || ''}
+                            onChange={(e) => {
+                              setEditedContent((prev) => {
+                                if (!prev) return prev;
+                                return { ...prev, aboutText: e.target.value } as CMSContent;
+                              });
+                            }}
+                            rows={4}
+                            className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light resize-none"
                           />
                         </div>
                       </div>
@@ -1437,8 +1918,13 @@ export default function AdminPage() {
                           <label className="block text-sm text-muted-foreground mb-2">Título</label>
                           <input
                             type="text"
-                            value={editedContent.servicesTitle}
-                            onChange={(e) => setEditedContent({ ...editedContent, servicesTitle: e.target.value })}
+                            value={editedContent?.servicesTitle || ''}
+                            onChange={(e) => {
+                              setEditedContent((prev) => {
+                                if (!prev) return prev;
+                                return { ...prev, servicesTitle: e.target.value } as CMSContent;
+                              });
+                            }}
                             className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
                           />
                         </div>
@@ -1446,8 +1932,13 @@ export default function AdminPage() {
                           <label className="block text-sm text-muted-foreground mb-2">Subtítulo</label>
                           <input
                             type="text"
-                            value={editedContent.servicesSubtitle}
-                            onChange={(e) => setEditedContent({ ...editedContent, servicesSubtitle: e.target.value })}
+                            value={editedContent?.servicesSubtitle || ''}
+                            onChange={(e) => {
+                              setEditedContent((prev) => {
+                                if (!prev) return prev;
+                                return { ...prev, servicesSubtitle: e.target.value } as CMSContent;
+                              });
+                            }}
                             className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
                           />
                         </div>
@@ -1462,64 +1953,94 @@ export default function AdminPage() {
                           <label className="block text-sm text-muted-foreground mb-2">Título</label>
                           <input
                             type="text"
-                            value={editedContent.ctaTitle}
-                            onChange={(e) => setEditedContent({ ...editedContent, ctaTitle: e.target.value })}
+                            value={editedContent?.ctaTitle || ''}
+                            onChange={(e) => {
+                              setEditedContent((prev) => {
+                                if (!prev) return prev;
+                                return { ...prev, ctaTitle: e.target.value } as CMSContent;
+                              });
+                            }}
                             className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
                           />
                         </div>
                         <div>
-                          <label className="block text-sm text-muted-foreground mb-2">Subtítulo</label>
+                          <label className="block text-sm text-muted-foreground mb-2">Texto</label>
                           <textarea
-                            value={editedContent.ctaSubtitle}
-                            onChange={(e) => setEditedContent({ ...editedContent, ctaSubtitle: e.target.value })}
-                            rows={2}
+                            value={editedContent?.ctaSubtitle || ''}
+                            onChange={(e) => {
+                              setEditedContent((prev) => {
+                                if (!prev) return prev;
+                                return { ...prev, ctaSubtitle: e.target.value } as CMSContent;
+                              });
+                            }}
+                            rows={3}
                             className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light resize-none"
                           />
                         </div>
                       </div>
                     </GlassCard>
 
-                    {/* Contact Info */}
+                    {/* Contact Information */}
                     <GlassCard className="p-6">
-                      <h2 className="text-lg font-semibold text-ivory mb-4 flex items-center gap-2">
-                        <Phone className="w-5 h-5 text-accent" />
-                        Información de Contacto
-                      </h2>
-                      <div className="grid sm:grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-sm text-muted-foreground mb-2">Teléfono</label>
-                          <input
-                            type="text"
-                            value={editedContent.phone}
-                            onChange={(e) => setEditedContent({ ...editedContent, phone: e.target.value })}
-                            className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
-                          />
+                      <h2 className="text-lg font-semibold text-ivory mb-4">Información de Contacto</h2>
+                      <div className="space-y-4">
+                        <div className="grid sm:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-sm text-muted-foreground mb-2 flex items-center gap-2">
+                              <Phone className="w-4 h-4" /> Teléfono
+                            </label>
+                            <input
+                              type="text"
+                              value={editedContent?.phone || ''}
+                              onChange={(e) => {
+                                setEditedContent((prev) => {
+                                  if (!prev) return prev;
+                                  return {
+                                    ...prev,
+                                    phone: e.target.value
+                                  } as CMSContent;
+                                });
+                              }}
+                              className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm text-muted-foreground mb-2 flex items-center gap-2">
+                              <Mail className="w-4 h-4" /> Email
+                            </label>
+                            <input
+                              type="email"
+                              value={editedContent?.email || ''}
+                              onChange={(e) => {
+                                setEditedContent((prev) => {
+                                  if (!prev) return prev;
+                                  return {
+                                    ...prev,
+                                    email: e.target.value
+                                  } as CMSContent;
+                                });
+                              }}
+                              className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
+                            />
+                          </div>
                         </div>
                         <div>
-                          <label className="block text-sm text-muted-foreground mb-2">WhatsApp</label>
-                          <input
-                            type="text"
-                            value={editedContent.whatsapp}
-                            onChange={(e) => setEditedContent({ ...editedContent, whatsapp: e.target.value })}
-                            className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm text-muted-foreground mb-2">Email</label>
-                          <input
-                            type="email"
-                            value={editedContent.email}
-                            onChange={(e) => setEditedContent({ ...editedContent, email: e.target.value })}
-                            className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm text-muted-foreground mb-2">Dirección</label>
-                          <input
-                            type="text"
-                            value={editedContent.address}
-                            onChange={(e) => setEditedContent({ ...editedContent, address: e.target.value })}
-                            className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
+                          <label className="block text-sm text-muted-foreground mb-2 flex items-center gap-2">
+                            <MapPin className="w-4 h-4" /> Dirección
+                          </label>
+                          <textarea
+                            value={editedContent?.address || ''}
+                            onChange={(e) => {
+                              setEditedContent((prev) => {
+                                if (!prev) return prev;
+                                return {
+                                  ...prev,
+                                  address: e.target.value
+                                } as CMSContent;
+                              });
+                            }}
+                            rows={2}
+                            className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light resize-none"
                           />
                         </div>
                       </div>
@@ -1528,35 +2049,41 @@ export default function AdminPage() {
                     {/* Social Media */}
                     <GlassCard className="p-6">
                       <h2 className="text-lg font-semibold text-ivory mb-4">Redes Sociales</h2>
-                      <div className="grid sm:grid-cols-3 gap-4">
+                      <div className="grid sm:grid-cols-2 gap-4">
                         <div>
-                          <label className="block text-sm text-muted-foreground mb-2">Instagram</label>
+                          <label className="block text-sm text-muted-foreground mb-2">Instagram (URL)</label>
                           <input
                             type="url"
-                            value={editedContent.socialInstagram || ''}
-                            onChange={(e) => setEditedContent({ ...editedContent, socialInstagram: e.target.value })}
+                            value={editedContent?.socialInstagram || ''}
+                            onChange={(e) => {
+                              setEditedContent((prev) => {
+                                if (!prev) return prev;
+                                return {
+                                  ...prev,
+                                  socialInstagram: e.target.value
+                                } as CMSContent;
+                              });
+                            }}
                             className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
-                            placeholder="https://instagram.com/..."
+                            placeholder="https://instagram.com/tu-usuario"
                           />
                         </div>
                         <div>
-                          <label className="block text-sm text-muted-foreground mb-2">Facebook</label>
+                          <label className="block text-sm text-muted-foreground mb-2">WhatsApp (Número)</label>
                           <input
-                            type="url"
-                            value={editedContent.socialFacebook || ''}
-                            onChange={(e) => setEditedContent({ ...editedContent, socialFacebook: e.target.value })}
+                            type="text"
+                            value={editedContent?.whatsapp || ''}
+                            onChange={(e) => {
+                              setEditedContent((prev) => {
+                                if (!prev) return prev;
+                                return {
+                                  ...prev,
+                                  whatsapp: e.target.value
+                                } as CMSContent;
+                              });
+                            }}
                             className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
-                            placeholder="https://facebook.com/..."
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm text-muted-foreground mb-2">Twitter</label>
-                          <input
-                            type="url"
-                            value={editedContent.socialTwitter || ''}
-                            onChange={(e) => setEditedContent({ ...editedContent, socialTwitter: e.target.value })}
-                            className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
-                            placeholder="https://twitter.com/..."
+                            placeholder="+34600000000"
                           />
                         </div>
                       </div>
@@ -1564,245 +2091,24 @@ export default function AdminPage() {
                   </div>
                 </motion.div>
               )}
+
+
+            </AnimatePresence>
+
+            {/* Advanced Image Manager Modal - outside AnimatePresence mode="wait" */}
+            <AnimatePresence>
+              {activeImageManager && (
+                <ContextualImageManager
+                  defaultFolder={activeImageManager.folder}
+                  currentUrl={activeImageManager.currentUrl}
+                  onSelect={activeImageManager.onSelect}
+                  onClose={() => setActiveImageManager(null)}
+                />
+              )}
             </AnimatePresence>
           </main>
         </div>
       </div>
-
-      {/* Alternative Slot Modal */}
-      <AnimatePresence>
-        {showAlternativeModal && selectedAppointmentId && (
-          <motion.div
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-obsidian/80 backdrop-blur-sm"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={() => setShowAlternativeModal(false)}
-          >
-            <motion.div
-              className="glass-card p-6 max-w-md w-full"
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <h3 className="text-xl font-bold text-ivory mb-4">Proponer Alternativa</h3>
-              <p className="text-muted-foreground text-sm mb-6">
-                Propón una nueva fecha y hora para esta cita.
-              </p>
-
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm text-muted-foreground mb-2">Fecha</label>
-                  <input
-                    type="date"
-                    value={alternativeSlot.date}
-                    onChange={(e) => setAlternativeSlot({ ...alternativeSlot, date: e.target.value })}
-                    min={new Date().toISOString().split('T')[0]}
-                    className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm text-muted-foreground mb-2">Hora</label>
-                  <select
-                    value={alternativeSlot.time}
-                    onChange={(e) => setAlternativeSlot({ ...alternativeSlot, time: e.target.value })}
-                    className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
-                  >
-                    <option value="">Selecciona hora</option>
-                    {timeSlots.map((time) => (
-                      <option key={time} value={time}>{time}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="flex gap-3 mt-6">
-                <PremiumButton
-                  variant="ghost"
-                  onClick={() => {
-                    setShowAlternativeModal(false);
-                    setAlternativeSlot({ date: '', time: '' });
-                    setSelectedAppointmentId(null);
-                  }}
-                  className="flex-1"
-                >
-                  Cancelar
-                </PremiumButton>
-                <PremiumButton
-                  variant="cta"
-                  onClick={() => {
-                    if (alternativeSlot.date && alternativeSlot.time && selectedAppointmentId) {
-                      handleStatusUpdate(selectedAppointmentId, 'alternative', alternativeSlot);
-                    }
-                  }}
-                  disabled={!alternativeSlot.date || !alternativeSlot.time}
-                  className="flex-1"
-                >
-                  Enviar Alternativa
-                </PremiumButton>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Service Edit Modal */}
-      <AnimatePresence>
-        {editingService && (
-          <motion.div
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-obsidian/80 backdrop-blur-sm"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={() => setEditingService(null)}
-          >
-            <motion.div
-              className="glass-card p-6 max-w-lg w-full max-h-[90vh] overflow-y-auto"
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <h3 className="text-xl font-bold text-ivory mb-6">
-                {editingService.id.startsWith('new-') ? 'Nuevo Servicio' : 'Editar Servicio'}
-              </h3>
-
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm text-muted-foreground mb-2">Título</label>
-                  <input
-                    type="text"
-                    value={editingService.title}
-                    onChange={(e) => setEditingService({ ...editingService, title: e.target.value })}
-                    className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm text-muted-foreground mb-2">Descripción</label>
-                  <textarea
-                    value={editingService.description}
-                    onChange={(e) => setEditingService({ ...editingService, description: e.target.value })}
-                    rows={3}
-                    className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light resize-none"
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm text-muted-foreground mb-2">Duración</label>
-                    <input
-                      type="text"
-                      value={editingService.duration}
-                      onChange={(e) => setEditingService({ ...editingService, duration: e.target.value })}
-                      placeholder="60-90 min"
-                      className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm text-muted-foreground mb-2">Precio</label>
-                    <input
-                      type="text"
-                      value={editingService.price || ''}
-                      onChange={(e) => setEditingService({ ...editingService, price: e.target.value })}
-                      placeholder="Desde 60€"
-                      className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex gap-3 mt-6">
-                <PremiumButton variant="ghost" onClick={() => setEditingService(null)} className="flex-1">
-                  Cancelar
-                </PremiumButton>
-                <PremiumButton variant="cta" onClick={handleSaveService} className="flex-1">
-                  Guardar
-                </PremiumButton>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Testimonial Edit Modal */}
-      <AnimatePresence>
-        {editingTestimonial && (
-          <motion.div
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-obsidian/80 backdrop-blur-sm"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={() => setEditingTestimonial(null)}
-          >
-            <motion.div
-              className="glass-card p-6 max-w-lg w-full"
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <h3 className="text-xl font-bold text-ivory mb-6">
-                {editingTestimonial.id.startsWith('new-') ? 'Nuevo Testimonio' : 'Editar Testimonio'}
-              </h3>
-
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm text-muted-foreground mb-2">Nombre</label>
-                    <input
-                      type="text"
-                      value={editingTestimonial.name}
-                      onChange={(e) => setEditingTestimonial({ ...editingTestimonial, name: e.target.value })}
-                      className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm text-muted-foreground mb-2">Rol</label>
-                    <input
-                      type="text"
-                      value={editingTestimonial.role}
-                      onChange={(e) => setEditingTestimonial({ ...editingTestimonial, role: e.target.value })}
-                      className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-sm text-muted-foreground mb-2">Valoración</label>
-                  <div className="flex gap-2">
-                    {[1, 2, 3, 4, 5].map((star) => (
-                      <button
-                        key={star}
-                        onClick={() => setEditingTestimonial({ ...editingTestimonial, rating: star })}
-                        className="p-2"
-                      >
-                        <Star className={cn('w-6 h-6', star <= editingTestimonial.rating ? 'text-accent fill-accent' : 'text-muted-foreground')} />
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-sm text-muted-foreground mb-2">Contenido</label>
-                  <textarea
-                    value={editingTestimonial.content}
-                    onChange={(e) => setEditingTestimonial({ ...editingTestimonial, content: e.target.value })}
-                    rows={4}
-                    className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light resize-none"
-                  />
-                </div>
-              </div>
-
-              <div className="flex gap-3 mt-6">
-                <PremiumButton variant="ghost" onClick={() => setEditingTestimonial(null)} className="flex-1">
-                  Cancelar
-                </PremiumButton>
-                <PremiumButton variant="cta" onClick={handleSaveTestimonial} className="flex-1">
-                  Guardar
-                </PremiumButton>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+    </div >
   );
 }

@@ -130,6 +130,7 @@ export default function PortalPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [authError, setAuthError] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
+  const [acceptedPrivacy, setAcceptedPrivacy] = useState(false);
 
   // Estado del formulario de citas
   const [formData, setFormData] = useState<FormData>({
@@ -181,6 +182,12 @@ export default function PortalPage() {
 
     if (authForm.password.length < 6) {
       setAuthError('La contraseña debe tener al menos 6 caracteres');
+      setAuthLoading(false);
+      return;
+    }
+
+    if (!acceptedPrivacy) {
+      setAuthError('Debes aceptar la Política de Privacidad para registrarte');
       setAuthLoading(false);
       return;
     }
@@ -455,6 +462,24 @@ export default function PortalPage() {
                     </p>
                   )}
 
+                  {/* RGPD Checkbox */}
+                  <label className="flex items-start gap-3 cursor-pointer group">
+                    <input
+                      type="checkbox"
+                      checked={acceptedPrivacy}
+                      onChange={(e) => setAcceptedPrivacy(e.target.checked)}
+                      required
+                      className="mt-1 w-4 h-4 rounded border-border accent-accent flex-shrink-0"
+                    />
+                    <span className="text-xs text-muted-foreground leading-relaxed group-hover:text-ivory/70 transition-colors">
+                      He leído y acepto la{' '}
+                      <Link href="/politica-de-privacidad" className="text-accent hover:underline" target="_blank">
+                        Política de Privacidad
+                      </Link>{' '}
+                      y el tratamiento de mis datos personales.
+                    </span>
+                  </label>
+
                   <PremiumButton
                     type="submit"
                     variant="cta"
@@ -540,32 +565,18 @@ export default function PortalPage() {
               </div>
 
               {/* Quick Actions */}
-              <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-                <GlassCard className="p-6 cursor-pointer hover:border-emerald-light/30" onClick={() => setPortalView('new-appointment')}>
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-xl bg-emerald/20 flex items-center justify-center">
-                      <Plus className="w-6 h-6 text-accent" />
-                    </div>
-                    <div>
-                      <h3 className="font-semibold text-ivory">Nueva Cita</h3>
-                      <p className="text-xs text-muted-foreground">Solicitar sesión</p>
-                    </div>
+              <GlassCard className="p-10 cursor-pointer hover:border-accent/40 bg-gradient-to-br from-emerald/10 to-accent/5 group transition-all" onClick={() => setPortalView('new-appointment')}>
+                <div className="flex flex-col items-center text-center gap-4">
+                  <div className="w-20 h-20 rounded-2xl bg-accent/20 flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <Plus className="w-10 h-10 text-accent" />
                   </div>
-                </GlassCard>
-
-                {[
-                  { label: 'Pendientes', value: userAppointments.filter(a => a.status === 'pending').length, color: 'text-yellow-400' },
-                  { label: 'Aprobadas', value: userAppointments.filter(a => a.status === 'approved').length, color: 'text-emerald-400' },
-                  { label: 'Total', value: userAppointments.length, color: 'text-accent' },
-                ].map((stat, i) => (
-                  <GlassCard key={i} className="p-6">
-                    <div className="text-center">
-                      <div className={cn('text-3xl font-bold', stat.color)}>{stat.value}</div>
-                      <div className="text-sm text-muted-foreground">{stat.label}</div>
-                    </div>
-                  </GlassCard>
-                ))}
-              </div>
+                  <div>
+                    <h3 className="text-xl font-bold text-ivory">Solicitar Nueva Cita</h3>
+                    <p className="text-muted-foreground max-w-[250px] mx-auto mt-2">Reserva tu próxima sesión de entrenamiento o valoración.</p>
+                  </div>
+                  <PremiumButton variant="cta" className="mt-2">Comenzar Solicitud</PremiumButton>
+                </div>
+              </GlassCard>
 
               {/* Appointments List */}
               <div className="flex items-center justify-between mb-4">

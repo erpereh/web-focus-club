@@ -4,16 +4,17 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000",
-    "build": "next build",
+    "build": "node scripts/build-static.js",
     "start": "npx serve out -p 3000",
     "lint": "eslint .",
-    "deploy": "next build && firebase deploy"
+    "deploy": "node scripts/build-static.js && firebase deploy"
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.2.3",
     "@radix-ui/react-toast": "^1.2.14",
     "@radix-ui/react-tooltip": "^1.2.7",
     "class-variance-authority": "^0.7.1",
+    "cloudinary": "^2.9.0",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
     "firebase": "^12.9.0",
@@ -22,7 +23,8 @@
     "next": "^16.1.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "sharp": "^0.34.3",
+    "sharp": "^0.33.5",
+    "firebase-frameworks": "^0.11.8",
     "tailwind-merge": "^3.3.1",
     "tailwindcss-animate": "^1.0.7",
     "uuid": "^11.1.0",

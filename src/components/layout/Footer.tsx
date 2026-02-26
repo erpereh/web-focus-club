@@ -10,6 +10,7 @@ const footerLinks = [
   { href: '/sandra', label: 'Sobre Sandra' },
   { href: '/servicios', label: 'Servicios' },
   { href: '/centro', label: 'El Centro' },
+  { href: '/galeria', label: 'Galería' },
   { href: '/contacto', label: 'Contacto' },
   { href: '/solicitar-cita', label: 'Reservar Cita' },
 ];
@@ -146,11 +147,11 @@ export function Footer() {
             © {new Date().getFullYear()} Focus Club Vallecas. Todos los derechos reservados.
           </p>
           <div className="flex items-center gap-6">
-            <Link href="#" className="text-muted-foreground hover:text-accent text-sm transition-colors">
+            <Link href="/politica-de-privacidad" className="text-muted-foreground hover:text-accent text-sm transition-colors">
               Política de Privacidad
             </Link>
-            <Link href="#" className="text-muted-foreground hover:text-accent text-sm transition-colors">
-              Términos de Uso
+            <Link href="/cookies" className="text-muted-foreground hover:text-accent text-sm transition-colors">
+              Política de Cookies
             </Link>
           </div>
         </div>

@@ -3,7 +3,7 @@
 import { motion } from 'framer-motion';
 import Link from 'next/link';
 import Image from 'next/image';
-import { Award, Heart, Users, Target, ArrowRight, Calendar, CheckCircle, Trophy, Medal, Star } from 'lucide-react';
+import { Award, Heart, Users, User, Target, ArrowRight, Calendar, CheckCircle, Trophy, Medal, Star } from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass-card';
 import { PremiumButton } from '@/components/ui/premium-button';
 import { useCMS } from '@/hooks/useFirestore';
@@ -125,30 +125,43 @@ export default function SandraPage() {
                 La experta detrás del proyecto
               </span>
               <h1 className="text-4xl md:text-5xl font-bold text-ivory mt-3 mb-6">
-                Sandra Andújar
+                {cmsContent?.sandra?.name || 'Sandra Andújar'}
               </h1>
-              <p className="text-muted-foreground text-lg leading-relaxed mb-4">
-                Con más de <span className="text-accent font-semibold">20 años de experiencia</span> en el mundo del fitness de competición, Sandra Andújar es una referencia en entrenamiento de hipertrofia y preparación física de élite.
-              </p>
-              <p className="text-muted-foreground text-lg leading-relaxed mb-8">
-                <span className="text-accent font-semibold">Jueza internacional certifica</span> y preparadora de campeones, su metodología combina la ciencia más avanzada con una pasión inquebrantable por la excelencia.
-              </p>
+              <div className="text-muted-foreground text-lg leading-relaxed mb-4 space-y-4">
+                {cmsContent?.sandra?.bio ? (
+                  cmsContent.sandra.bio.split('\n').map((para, i) => (
+                    <p key={i}>{para}</p>
+                  ))
+                ) : (
+                  <>
+                    <p>
+                      Con más de <span className="text-accent font-semibold">20 años de experiencia</span> en el mundo del fitness de competición, Sandra Andújar es una referencia en entrenamiento de hipertrofia y preparación física de élite.
+                    </p>
+                    <p>
+                      <span className="text-accent font-semibold">Jueza internacional certificada</span> y preparadora de campeones, su metodología combina la ciencia más avanzada con una pasión inquebrantable por la excelencia.
+                    </p>
+                  </>
+                )}
+              </div>
 
               {/* Achievements Grid */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                {achievements.map((achievement, index) => (
-                  <motion.div
-                    key={index}
-                    className="text-center p-4 rounded-xl bg-primary/10 border border-primary/20"
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: index * 0.1 }}
-                  >
-                    <achievement.icon className="w-6 h-6 text-accent mx-auto mb-2" />
-                    <div className="text-xl font-bold text-ivory">{achievement.value}</div>
-                    <div className="text-xs text-muted-foreground">{achievement.label}</div>
-                  </motion.div>
-                ))}
+                {(cmsContent?.sandra?.achievements && cmsContent.sandra.achievements.length > 0 ? cmsContent.sandra.achievements : ['20+ Años', '50+ Atletas', '15+ Copas', 'Jueza Int.']).map((text, index) => {
+                  const icons = [Trophy, Medal, Star, Award];
+                  const Icon = icons[index % icons.length];
+                  return (
+                    <motion.div
+                      key={index}
+                      className="text-center p-4 rounded-xl bg-primary/10 border border-primary/20"
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: index * 0.1 }}
+                    >
+                      <Icon className="w-6 h-6 text-accent mx-auto mb-2" />
+                      <div className="text-sm font-bold text-ivory">{text}</div>
+                    </motion.div>
+                  );
+                })}
               </div>
             </motion.div>
 
@@ -160,12 +173,9 @@ export default function SandraPage() {
             >
               <div className="aspect-square rounded-3xl overflow-hidden glass-card p-2 max-w-md mx-auto">
                 <div className="relative w-full h-full rounded-2xl overflow-hidden">
-                  <Image
-                    src="/images/sandra-trainer.png"
-                    alt="Sandra Andújar - Jueza Internacional y Preparadora de Campeones"
-                    fill
-                    className="object-cover"
-                  />
+                  <div className="w-full h-full bg-gradient-to-br from-carbon to-background flex items-center justify-center">
+                    <User className="w-32 h-32 text-muted-foreground opacity-20" />
+                  </div>
                   <div className="absolute inset-0 bg-gradient-to-t from-carbon/80 via-transparent to-transparent" />
                   <div className="absolute bottom-0 left-0 right-0 p-6">
                     <div className="flex flex-wrap gap-2">
@@ -244,7 +254,7 @@ export default function SandraPage() {
           </motion.div>
 
           <div className="max-w-3xl mx-auto">
-            {timeline.map((item, index) => (
+            {(cmsContent?.sandra?.timeline && cmsContent.sandra.timeline.length > 0 ? cmsContent.sandra.timeline : timeline).map((item, index) => (
               <motion.div
                 key={index}
                 className="relative pl-8 pb-12 last:pb-0"
@@ -289,7 +299,7 @@ export default function SandraPage() {
                 Una formación continua y rigurosa que garantiza la máxima calidad en cada sesión.
               </p>
               <div className="space-y-3">
-                {certifications.map((cert, index) => (
+                {(cmsContent?.sandra?.certifications && cmsContent.sandra.certifications.length > 0 ? cmsContent.sandra.certifications : certifications).map((cert, index) => (
                   <motion.div
                     key={index}
                     className="flex items-start gap-3"
