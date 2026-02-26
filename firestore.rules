@@ -1,0 +1,46 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─── USUARIOS ───
+    match /users/{uid} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.auth.uid == uid;
+      allow update: if request.auth != null && (request.auth.uid == uid || isAdmin());
+      allow delete: if request.auth != null;
+    }
+
+    // ─── CITAS ───
+    match /appointments/{appointmentId} {
+      allow create: if request.auth != null;
+      allow read: if request.auth != null;
+      allow update, delete: if isAdmin();
+    }
+
+    // ─── SERVICIOS ───
+    match /services/{serviceId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // ─── TESTIMONIOS ───
+    match /testimonials/{testimonialId} {
+      allow read: if true;
+      allow create: if request.auth != null;
+      allow update, delete: if isAdmin();
+    }
+
+    // ─── CMS / CONTENIDO DEL SITIO ───
+    match /site_content/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // ─── FUNCIÓN HELPER ───
+    function isAdmin() {
+      return request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+  }
+}
