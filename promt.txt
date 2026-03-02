@@ -1,19 +1,31 @@
-¡Base de datos conectada! Ahora vamos a por el Bloque de Gestión de Entrenadores.
+REFINAMIENTO FINAL DEL PANEL DE GESTIÓN (ADMIN)
 
-1. Base de Datos (MCP): > * Crea la colección trainers en Firestore.
+Vamos a limpiar la interfaz y mejorar la herramienta de disponibilidad. Aplica estos cambios:
 
-Modifica la colección users para que el campo role pueda ser admin, trainer o client.
+Limpieza Total en Equipo:
 
-2. Panel de Admin (Sandra):
+En la lista de entrenadores, elimina el badge verde de 'ACTIVO' y los textos de 'Entrenamiento Personal / Preparación Competición'.
 
-En la sección 'Clientes', añade la opción de editar el role de cada usuario.
+La fila debe mostrar solo el Avatar, el Nombre del entrenador y el botón rojo de 'Eliminar'.
 
-Crea una nueva sección 'Equipo' donde Sandra pueda añadir/eliminar entrenadores.
+Buscador de Clientes (Lupa):
 
-IMPORTANTE: En el modal de 'Aprobar Cita', sustituye el campo de texto libre 'Entrenador asignado' por un Select/Desplegable que cargue los nombres de la colección trainers.
+Añade un campo de búsqueda con un icono de lupa en la sección de 'Gestión de Clientes'.
 
-3. Vista de Entrenador:
+Debe filtrar la lista por nombre o email en tiempo real mientras Sandra escribe.
 
-Si un usuario tiene role: 'trainer', su dashboard solo mostrará las citas donde su ID aparezca como assignedTrainer.
+Nuevo Sistema de Bloqueo de Disponibilidad:
 
-Solo podrá ver: Fecha, Hora, Cliente y Tipo de sesión. No podrá editar nada más.
+Sustituye los selects de fecha/hora por un Calendario de Bloqueo.
+
+Implementa la lógica de:
+
+Bloqueo por rango: Seleccionar hora de inicio y fin (ej. 10:00 a 13:00) y que bloquee todas las horas intermedias automáticamente.
+
+Bloqueo de día completo: Un botón para marcar toda la jornada como no disponible de un solo clic.
+
+Lógica de Roles (Entrenador):
+
+Asegúrate de que el usuario con rol 'ENTRENADOR' vea su dashboard filtrado, mostrando solo las citas que Sandra le haya asignado previamente en el modal de aprobación.
+
+Confírmame cuando la UI esté limpia y el buscador funcione para que Sandra pueda probarlo.

@@ -7,7 +7,12 @@ service cloud.firestore {
     match /users/{uid} {
       allow read: if request.auth != null;
       allow create: if request.auth != null && request.auth.uid == uid;
-      allow update: if request.auth != null && (request.auth.uid == uid || isAdmin());
+      // Un usuario puede actualizar su propio doc EXCEPTO el campo role.
+      // Solo admin puede cambiar el role.
+      allow update: if request.auth != null && (
+        (request.auth.uid == uid && !('role' in request.resource.data) || request.resource.data.role == resource.data.role)
+        || isAdmin()
+      );
       allow delete: if isAdmin();
     }
 
@@ -17,27 +22,39 @@ service cloud.firestore {
       allow create: if request.auth != null
                     && request.resource.data.status == 'pending';
 
-      // Un usuario solo puede leer sus propias citas; admin lee todas
+      // Un usuario puede leer sus propias citas; admin lee todas;
+      // un trainer puede leer las citas donde está asignado
       allow read: if request.auth != null
-                  && (resource.data.userId == request.auth.uid || isAdmin());
+                  && (resource.data.userId == request.auth.uid
+                      || isAdmin()
+                      || isAssignedTrainer(resource));
 
-      // Solo admin puede modificar o eliminar citas
-      allow update, delete: if isAdmin();
+      // Admin puede modificar o eliminar cualquier cita.
+      // Un trainer solo puede actualizar trainerNotes en sus citas asignadas.
+      allow update: if isAdmin()
+                    || (isTrainer()
+                        && isAssignedTrainer(resource)
+                        && onlyTrainerNotesChanged());
+      allow delete: if isAdmin();
+    }
+
+    // ─── ENTRENADORES ───
+    match /trainers/{trainerId} {
+      // Cualquier usuario autenticado puede leer (para poblar desplegables)
+      allow read: if request.auth != null;
+      // Solo admin puede crear, modificar o eliminar entrenadores
+      allow write: if isAdmin();
     }
 
     // ─── FRANJAS BLOQUEADAS ───
     match /blocked_slots/{slotId} {
-      // Cualquier usuario autenticado puede leer (para ver disponibilidad en calendario)
       allow read: if request.auth != null;
-      // Solo admin puede crear, modificar o eliminar bloqueos
       allow write: if isAdmin();
     }
 
     // ─── AFORO POR FRANJA (datos públicos, sin info de usuarios) ───
     match /slot_occupancy/{slotId} {
-      // Cualquier usuario autenticado puede leer (para pintar el calendario)
       allow read: if request.auth != null;
-      // Solo admin puede modificar (se actualiza al aprobar/revertir citas)
       allow write: if isAdmin();
     }
 
@@ -66,10 +83,34 @@ service cloud.firestore {
       allow create: if isAdmin();
     }
 
-    // ─── FUNCIÓN HELPER ───
+    // ─── FUNCIONES HELPER ───
     function isAdmin() {
       return request.auth != null &&
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    function isTrainer() {
+      return request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'trainer';
+    }
+
+    // Comprueba si el trainer actual está asignado a esta cita.
+    // Busca en trainers por uid y compara con assignedTrainer del appointment.
+    function isAssignedTrainer(appt) {
+      return request.auth != null
+        && appt.data.assignedTrainer != null
+        && isTrainerAssignedByUid(appt.data.assignedTrainer);
+    }
+
+    // Verifica que el trainer doc referenciado tenga el uid del usuario actual
+    function isTrainerAssignedByUid(trainerId) {
+      return get(/databases/$(database)/documents/trainers/$(trainerId)).data.uid == request.auth.uid;
+    }
+
+    // Solo permite cambiar el campo trainerNotes y updatedAt
+    function onlyTrainerNotesChanged() {
+      let diff = request.resource.data.diff(resource.data);
+      return diff.affectedKeys().hasOnly(['trainerNotes', 'updatedAt']);
     }
   }
 }

@@ -36,13 +36,16 @@ import {
   Globe,
   Lock,
   CalendarOff,
+  Dumbbell,
+  FileText,
+  Search,
 } from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass-card';
 import { PremiumButton } from '@/components/ui/premium-button';
 import { ImageUpload } from '@/components/ui/ImageUpload';
 import { ContextualImageManager } from '@/components/ui/ContextualImageManager';
 import { useAuth } from '@/contexts/AuthContext';
-import type { TimeSlot, Service, Testimonial, Appointment, CMSContent, BlockedSlot } from '@/types';
+import type { TimeSlot, Service, Testimonial, Appointment, CMSContent, BlockedSlot, Trainer } from '@/types';
 import {
   getAppointments,
   updateAppointmentStatus as updateAppointmentStatusFS,
@@ -67,6 +70,14 @@ import {
   deleteBlockedSlot as deleteBlockedSlotFS,
   incrementSlotOccupancy,
   decrementSlotOccupancy,
+  getTrainers,
+  getActiveTrainers,
+  addTrainer as addTrainerFS,
+  deleteTrainer as deleteTrainerFS,
+  getTrainerByUid,
+  getAppointmentsByTrainer,
+  updateTrainerNotes,
+  updateUserProfile,
 } from '@/lib/firestore';
 import { cn } from '@/lib/utils';
 import type { UserProfile } from '@/types';
@@ -206,7 +217,7 @@ function GaleriaTab() {
   );
 }
 
-type TabType = 'Inicio' | 'appointments' | 'availability' | 'clients' | 'services' | 'testimonials' | 'Sandra' | 'Centro' | 'Galeria' | 'Contacto';
+type TabType = 'Inicio' | 'appointments' | 'availability' | 'clients' | 'team' | 'services' | 'testimonials' | 'Sandra' | 'Centro' | 'Galeria' | 'Contacto';
 type StatusFilter = 'all' | 'pending' | 'approved' | 'rejected' | 'alternative';
 
 const statusConfig = {
@@ -253,6 +264,10 @@ const timeSlots = [
 export default function AdminPage() {
   const { user, userProfile, loading: authLoading, login, logout, isAdmin } = useAuth();
 
+  // Role checks
+  const isTrainerRole = userProfile?.role === 'trainer';
+  const canAccessAdmin = isAdmin || isTrainerRole;
+
   // Helper: check if a URL is a valid remote image (not a stale local path)
   const isValidImageUrl = (url?: string) => url && url.startsWith('http');
 
@@ -277,11 +292,10 @@ export default function AdminPage() {
 
   // Estado para horarios bloqueados
   const [blockedSlots, setBlockedSlots] = useState<BlockedSlot[]>([]);
-  const [newBlockedSlot, setNewBlockedSlot] = useState<{ date: string; time: string; reason: string }>({
-    date: '',
-    time: '',
-    reason: '',
-  });
+  const [blockDate, setBlockDate] = useState('');
+  const [blockStartTime, setBlockStartTime] = useState('');
+  const [blockEndTime, setBlockEndTime] = useState('');
+  const [blockReason, setBlockReason] = useState('');
 
   // CMS Edit States
   const [editedContent, setEditedContent] = useState<CMSContent | null>(null);
@@ -314,24 +328,47 @@ export default function AdminPage() {
   const [loginError, setLoginError] = useState('');
   const [loginLoading, setLoginLoading] = useState(false);
 
+  // Trainer management state
+  const [trainers, setTrainers] = useState<Trainer[]>([]);
+  const [trainerProfile, setTrainerProfile] = useState<Trainer | null>(null);
+  const [trainerAppointments, setTrainerAppointments] = useState<Appointment[]>([]);
+  const [editingNotes, setEditingNotes] = useState<{ id: string; notes: string } | null>(null);
+  const [savingNotes, setSavingNotes] = useState(false);
+
+  // Client search
+  const [clientSearch, setClientSearch] = useState('');
+
   // Cargar datos desde Firestore
   const refreshData = async () => {
-    const [appts, svcs, tests, cms, usersList, blocked] = await Promise.all([
+    const [appts, svcs, tests, cms, usersList, blocked, trainersList] = await Promise.all([
       getAppointments(),
       getServices(),
       getTestimonials(),
       getSiteContent(),
       getUsers(),
       getBlockedSlots(),
+      getTrainers(),
     ]);
     setAppointments(appts);
     setServices(svcs);
     setTestimonials(tests);
     setClients(usersList);
     setBlockedSlots(blocked);
+    setTrainers(trainersList);
     if (cms) {
       setCmsContent(cms);
       setEditedContent(cms);
+    }
+  };
+
+  // Cargar datos específicos del entrenador
+  const refreshTrainerData = async () => {
+    if (!user) return;
+    const tProfile = await getTrainerByUid(user.uid);
+    setTrainerProfile(tProfile);
+    if (tProfile) {
+      const appts = await getAppointmentsByTrainer(tProfile.id);
+      setTrainerAppointments(appts);
     }
   };
 
@@ -339,8 +376,11 @@ export default function AdminPage() {
     if (isAdmin) {
       // eslint-disable-next-line
       refreshData().catch(console.error);
+    } else if (isTrainerRole) {
+      // Trainers only load their own data
+      refreshTrainerData().catch(console.error);
     }
-  }, [isAdmin]);
+  }, [isAdmin, isTrainerRole]);
 
   // Stats
   const stats = {
@@ -487,7 +527,7 @@ export default function AdminPage() {
     );
   }
 
-  if (!user || !isAdmin) {
+  if (!user || !canAccessAdmin) {
     return (
       <div className="min-h-screen flex items-center justify-center px-4 bg-obsidian">
         <motion.div
@@ -547,6 +587,231 @@ export default function AdminPage() {
             </Link>
           </GlassCard>
         </motion.div>
+      </div>
+    );
+  }
+
+  // ============================================
+  // TRAINER-ONLY VIEW (no sidebar, limited access)
+  // ============================================
+  if (isTrainerRole && !isAdmin) {
+    const now = new Date();
+    const upcomingAppts = trainerAppointments
+      .filter(a => a.approvedSlot && new Date(a.approvedSlot.date + 'T' + a.approvedSlot.time) >= now)
+      .sort((a, b) => {
+        const da = new Date(a.approvedSlot!.date + 'T' + a.approvedSlot!.time);
+        const db = new Date(b.approvedSlot!.date + 'T' + b.approvedSlot!.time);
+        return da.getTime() - db.getTime();
+      });
+    const pastAppts = trainerAppointments
+      .filter(a => a.approvedSlot && new Date(a.approvedSlot.date + 'T' + a.approvedSlot.time) < now)
+      .sort((a, b) => {
+        const da = new Date(a.approvedSlot!.date + 'T' + a.approvedSlot!.time);
+        const db = new Date(b.approvedSlot!.date + 'T' + b.approvedSlot!.time);
+        return db.getTime() - da.getTime();
+      });
+
+    const handleSaveNotes = async () => {
+      if (!editingNotes) return;
+      setSavingNotes(true);
+      try {
+        await updateTrainerNotes(editingNotes.id, editingNotes.notes);
+        await refreshTrainerData();
+        setEditingNotes(null);
+      } catch (err) {
+        console.error('Error saving notes:', err);
+        alert('Error al guardar las notas.');
+      }
+      setSavingNotes(false);
+    };
+
+    const renderTrainerAppointmentCard = (appt: Appointment, isPast: boolean) => (
+      <GlassCard key={appt.id} className={cn('p-5', isPast && 'opacity-70')}>
+        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+          <div className="flex-1 space-y-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald to-accent flex items-center justify-center text-obsidian font-bold">
+                {appt.name.charAt(0)}
+              </div>
+              <div>
+                <h3 className="font-semibold text-ivory">{appt.name}</h3>
+                {appt.sessionType && (
+                  <span className="px-2 py-0.5 rounded bg-emerald/20 text-emerald-light text-xs font-medium uppercase">
+                    {appt.sessionType}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="grid sm:grid-cols-2 gap-3 text-sm">
+              {appt.approvedSlot && (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Calendar className="w-4 h-4 text-accent" />
+                  <span className="text-ivory">
+                    {new Date(appt.approvedSlot.date).toLocaleDateString('es-ES', {
+                      weekday: 'long', day: 'numeric', month: 'long',
+                    })}
+                  </span>
+                </div>
+              )}
+              {appt.approvedSlot && (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Clock className="w-4 h-4 text-accent" />
+                  <span className="text-ivory">{appt.approvedSlot.time}</span>
+                </div>
+              )}
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <Award className="w-4 h-4 text-accent" />
+                <span className="text-ivory">{serviceLabels[appt.serviceType] || appt.serviceType}</span>
+              </div>
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <Clock className="w-4 h-4 text-accent" />
+                <span className="text-ivory">{durationLabels[appt.duration] || appt.duration + ' min'}</span>
+              </div>
+            </div>
+
+            {/* Trainer Notes */}
+            {editingNotes?.id === appt.id ? (
+              <div className="space-y-2">
+                <label className="text-xs text-muted-foreground">Notas del entrenador:</label>
+                <textarea
+                  value={editingNotes.notes}
+                  onChange={(e) => setEditingNotes({ ...editingNotes, notes: e.target.value })}
+                  className="w-full px-3 py-2 rounded-lg bg-input border border-border text-ivory text-sm focus:outline-none focus:border-emerald-light resize-none"
+                  rows={3}
+                  placeholder="Escribe tus notas sobre esta sesión..."
+                />
+                <div className="flex gap-2">
+                  <PremiumButton
+                    variant="cta"
+                    size="sm"
+                    icon={<Save className="w-3.5 h-3.5" />}
+                    onClick={handleSaveNotes}
+                    disabled={savingNotes}
+                  >
+                    {savingNotes ? 'Guardando...' : 'Guardar'}
+                  </PremiumButton>
+                  <PremiumButton
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setEditingNotes(null)}
+                  >
+                    Cancelar
+                  </PremiumButton>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-start gap-2">
+                {appt.trainerNotes ? (
+                  <div className="flex-1 p-2 rounded-lg bg-muted/30">
+                    <p className="text-xs text-muted-foreground mb-1">Tus notas:</p>
+                    <p className="text-ivory text-sm">{appt.trainerNotes}</p>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground italic">Sin notas</p>
+                )}
+                <button
+                  onClick={() => setEditingNotes({ id: appt.id, notes: appt.trainerNotes || '' })}
+                  className="text-accent hover:text-accent/80 transition-colors p-1"
+                  title="Editar notas"
+                >
+                  <Edit3 className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </GlassCard>
+    );
+
+    return (
+      <div className="min-h-screen -mt-20 bg-obsidian">
+        {/* Header */}
+        <header className="glass-dark border-b border-border sticky top-0 z-40">
+          <div className="container mx-auto px-4">
+            <div className="flex items-center justify-between h-16">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald to-accent flex items-center justify-center">
+                  <Dumbbell className="w-4 h-4 text-obsidian" />
+                </div>
+                <div>
+                  <span className="font-bold text-ivory">Panel Entrenador</span>
+                  {trainerProfile && (
+                    <span className="text-xs text-muted-foreground ml-2">({trainerProfile.name})</span>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <PremiumButton
+                  variant="ghost"
+                  size="sm"
+                  icon={<RefreshCw className="w-4 h-4" />}
+                  onClick={() => refreshTrainerData()}
+                >
+                  <span className="hidden sm:inline">Actualizar</span>
+                </PremiumButton>
+                <PremiumButton
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => logout()}
+                  icon={<LogOut className="w-4 h-4" />}
+                >
+                  <span className="hidden sm:inline">Salir</span>
+                </PremiumButton>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <div className="container mx-auto px-4 py-8 max-w-4xl">
+          {!trainerProfile ? (
+            <GlassCard className="p-12 text-center">
+              <AlertCircle className="w-12 h-12 mx-auto mb-4 text-yellow-400" />
+              <h2 className="text-xl font-bold text-ivory mb-2">Perfil no encontrado</h2>
+              <p className="text-muted-foreground">
+                Tu cuenta tiene rol de entrenador, pero no se ha encontrado un perfil en la colección de trainers.
+                Contacta con la administradora.
+              </p>
+            </GlassCard>
+          ) : (
+            <div className="space-y-8">
+              {/* Upcoming Appointments */}
+              <div>
+                <h2 className="text-xl font-bold text-ivory mb-4 flex items-center gap-2">
+                  <Calendar className="w-5 h-5 text-accent" />
+                  Próximos entrenamientos
+                  {upcomingAppts.length > 0 && (
+                    <span className="text-sm font-normal text-muted-foreground">({upcomingAppts.length})</span>
+                  )}
+                </h2>
+                {upcomingAppts.length > 0 ? (
+                  <div className="space-y-4">
+                    {upcomingAppts.map(a => renderTrainerAppointmentCard(a, false))}
+                  </div>
+                ) : (
+                  <GlassCard className="p-8 text-center">
+                    <Calendar className="w-10 h-10 mx-auto mb-3 text-muted-foreground opacity-40" />
+                    <p className="text-muted-foreground">No tienes entrenamientos programados.</p>
+                  </GlassCard>
+                )}
+              </div>
+
+              {/* Past Appointments */}
+              {pastAppts.length > 0 && (
+                <div>
+                  <h2 className="text-xl font-bold text-ivory mb-4 flex items-center gap-2">
+                    <Clock className="w-5 h-5 text-muted-foreground" />
+                    Entrenamientos anteriores
+                    <span className="text-sm font-normal text-muted-foreground">({pastAppts.length})</span>
+                  </h2>
+                  <div className="space-y-4">
+                    {pastAppts.map(a => renderTrainerAppointmentCard(a, true))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     );
   }
@@ -653,6 +918,22 @@ export default function AdminPage() {
             >
               <Users className="w-5 h-5" />
               <span className="font-medium">Clientes</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('team')}
+              className={cn(
+                'w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-left',
+                activeTab === 'team'
+                  ? 'bg-emerald/20 text-emerald border border-emerald/30 shadow-lg shadow-emerald/10'
+                  : 'text-muted-foreground hover:bg-muted/50 hover:text-ivory'
+              )}
+            >
+              <Dumbbell className="w-5 h-5" />
+              <span className="font-medium">Equipo</span>
+              {trainers.length > 0 && (
+                <span className="ml-auto text-xs text-muted-foreground">{trainers.length}</span>
+              )}
             </button>
 
             <p className="text-xs text-muted-foreground uppercase tracking-wider mt-6 mb-3 px-3">Gestión</p>
@@ -969,12 +1250,24 @@ export default function AdminPage() {
                                         </span>
                                       )}
                                       {appointment.assignedTrainer && (
-                                        <span className="text-ivory">Entrenador: <strong>{appointment.assignedTrainer}</strong></span>
+                                        <span className="text-ivory">
+                                          Entrenador: <strong>{trainers.find(t => t.id === appointment.assignedTrainer)?.name || appointment.assignedTrainer}</strong>
+                                        </span>
                                       )}
                                       {appointment.sessionType && (
                                         <span className="px-2 py-0.5 rounded bg-emerald/20 text-emerald-light text-xs font-medium uppercase">{appointment.sessionType}</span>
                                       )}
                                     </div>
+                                  </div>
+                                )}
+
+                                {appointment.trainerNotes && (
+                                  <div className="p-3 rounded-lg bg-accent/10 border border-accent/20">
+                                    <p className="text-xs text-accent mb-1 font-semibold flex items-center gap-1">
+                                      <FileText className="w-3.5 h-3.5" />
+                                      Notas del entrenador:
+                                    </p>
+                                    <p className="text-ivory text-sm">{appointment.trainerNotes}</p>
                                   </div>
                                 )}
 
@@ -1103,13 +1396,38 @@ export default function AdminPage() {
                     </div>
                   </div>
 
+                  {/* Search bar */}
+                  <div className="relative mb-6">
+                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <input
+                      type="text"
+                      value={clientSearch}
+                      onChange={(e) => setClientSearch(e.target.value)}
+                      placeholder="Buscar por nombre o email..."
+                      className="w-full pl-11 pr-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light placeholder:text-muted-foreground"
+                    />
+                  </div>
+
                   <div className="grid gap-4">
-                    {clients.map((client) => (
+                    {clients
+                      .filter((c) => {
+                        if (!clientSearch.trim()) return true;
+                        const q = clientSearch.toLowerCase();
+                        return c.name.toLowerCase().includes(q) || c.email.toLowerCase().includes(q);
+                      })
+                      .map((client) => (
                       <GlassCard key={client.uid} className="p-6">
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                           <div className="flex items-center gap-4">
-                            <div className="w-12 h-12 rounded-full bg-accent/20 flex items-center justify-center">
-                              <User className="w-6 h-6 text-accent" />
+                            <div className={cn(
+                              "w-12 h-12 rounded-full flex items-center justify-center",
+                              client.role === 'admin' ? "bg-accent/20" : client.role === 'trainer' ? "bg-emerald/20" : "bg-accent/20"
+                            )}>
+                              {client.role === 'trainer' ? (
+                                <Dumbbell className="w-6 h-6 text-emerald" />
+                              ) : (
+                                <User className="w-6 h-6 text-accent" />
+                              )}
                             </div>
                             <div>
                               <h3 className="font-semibold text-ivory">{client.name}</h3>
@@ -1119,7 +1437,7 @@ export default function AdminPage() {
                               </div>
                             </div>
                           </div>
-                          <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
+                          <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
                             <div className="flex items-center gap-2">
                               <Phone className="w-4 h-4" />
                               {client.phone}
@@ -1128,12 +1446,46 @@ export default function AdminPage() {
                               <Calendar className="w-4 h-4" />
                               Unido el {client.createdAt ? new Date(client.createdAt).toLocaleDateString() : 'Fecha desconocida'}
                             </div>
-                            <span className={cn(
-                              "px-2 py-0.5 rounded-full text-xs font-medium uppercase tracking-tight",
-                              client.role === 'admin' ? "bg-accent/20 text-accent border border-accent/30" : "bg-emerald/10 text-emerald-light border border-emerald/20"
-                            )}>
-                              {client.role === 'admin' ? 'Administrador' : 'Cliente'}
-                            </span>
+                            {/* Role dropdown */}
+                            <select
+                              value={client.role}
+                              onChange={async (e) => {
+                                const newRole = e.target.value as 'admin' | 'trainer' | 'user';
+                                const oldRole = client.role;
+                                if (newRole === oldRole) return;
+                                try {
+                                  // Update user role in Firestore
+                                  await updateUserProfile(client.uid, { role: newRole });
+                                  // Auto-create trainer doc when promoting to trainer
+                                  if (newRole === 'trainer' && oldRole !== 'trainer') {
+                                    await addTrainerFS({ uid: client.uid, name: client.name, active: true });
+                                  }
+                                  // Auto-delete trainer doc when demoting from trainer
+                                  if (oldRole === 'trainer' && newRole !== 'trainer') {
+                                    const trainerDoc = await getTrainerByUid(client.uid);
+                                    if (trainerDoc) {
+                                      await deleteTrainerFS(trainerDoc.id);
+                                    }
+                                  }
+                                  await refreshData();
+                                } catch (err) {
+                                  console.error('Error updating role:', err);
+                                  alert('Error al cambiar el rol.');
+                                }
+                              }}
+                              className={cn(
+                                "px-2 py-1 rounded-lg text-xs font-medium uppercase tracking-tight border bg-input focus:outline-none focus:border-emerald-light cursor-pointer",
+                                client.role === 'admin'
+                                  ? "text-accent border-accent/30"
+                                  : client.role === 'trainer'
+                                    ? "text-emerald-light border-emerald/30"
+                                    : "text-ivory border-border"
+                              )}
+                            >
+                              <option value="user">Cliente</option>
+                              <option value="trainer">Entrenador</option>
+                              <option value="admin">Admin</option>
+                            </select>
                           </div>
                         </div>
                       </GlassCard>
@@ -1142,6 +1494,63 @@ export default function AdminPage() {
                       <GlassCard className="p-12 text-center">
                         <Users className="w-12 h-12 mx-auto mb-4 text-muted-foreground opacity-30" />
                         <p className="text-muted-foreground">No hay clientes registrados.</p>
+                      </GlassCard>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+
+              {/* ============================================
+                  TEAM (Equipo)
+                  ============================================ */}
+              {activeTab === 'team' && (
+                <motion.div
+                  key="team"
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                >
+                  <div className="flex items-center justify-between mb-6">
+                    <h1 className="text-2xl font-bold text-ivory">Equipo de Entrenadores</h1>
+                    <div className="flex gap-2 text-sm text-muted-foreground">
+                      Total: <span className="text-ivory font-semibold">{trainers.length}</span>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4">
+                    {trainers.map((trainer) => (
+                      <GlassCard key={trainer.id} className="p-6">
+                        <div className="flex items-center justify-between gap-4">
+                          <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 rounded-full bg-emerald/20 flex items-center justify-center">
+                              <Dumbbell className="w-6 h-6 text-emerald" />
+                            </div>
+                            <h3 className="font-semibold text-ivory">{trainer.name}</h3>
+                          </div>
+                          <PremiumButton
+                            variant="ghost"
+                            size="sm"
+                            icon={<Trash2 className="w-4 h-4" />}
+                            onClick={async () => {
+                              if (confirm(`¿Eliminar a ${trainer.name} del equipo?`)) {
+                                await deleteTrainerFS(trainer.id);
+                                await refreshData();
+                              }
+                            }}
+                            className="text-destructive hover:bg-destructive/10"
+                          >
+                            Eliminar
+                          </PremiumButton>
+                        </div>
+                      </GlassCard>
+                    ))}
+                    {trainers.length === 0 && (
+                      <GlassCard className="p-12 text-center">
+                        <Dumbbell className="w-12 h-12 mx-auto mb-4 text-muted-foreground opacity-30" />
+                        <p className="text-muted-foreground mb-2">No hay entrenadores registrados.</p>
+                        <p className="text-sm text-muted-foreground">
+                          Ve a la pestaña <button onClick={() => setActiveTab('clients')} className="text-accent underline">Clientes</button> y cambia el rol de un usuario a &ldquo;Entrenador&rdquo;.
+                        </p>
                       </GlassCard>
                     )}
                   </div>
@@ -2211,78 +2620,179 @@ export default function AdminPage() {
                     </p>
                   </div>
 
-                  {/* Add new blocked slot */}
+                  {/* Blocking calendar */}
                   <GlassCard className="p-6 mb-6">
                     <h2 className="text-lg font-semibold text-ivory mb-4 flex items-center gap-2">
                       <Lock className="w-5 h-5 text-accent" />
-                      Bloquear Franja Horaria
+                      Bloquear Disponibilidad
                     </h2>
-                    <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+
+                    <div className="grid sm:grid-cols-2 gap-6">
+                      {/* Left: Date picker + visual calendar */}
                       <div>
                         <label className="block text-sm text-muted-foreground mb-2">Fecha</label>
                         <input
                           type="date"
-                          value={newBlockedSlot.date}
-                          onChange={(e) => setNewBlockedSlot({ ...newBlockedSlot, date: e.target.value })}
+                          value={blockDate}
+                          onChange={(e) => setBlockDate(e.target.value)}
                           min={new Date().toISOString().split('T')[0]}
-                          className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
+                          className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light mb-4"
                         />
+
+                        {/* Visual day grid showing which slots are blocked */}
+                        {blockDate && (
+                          <div>
+                            <p className="text-xs text-muted-foreground mb-2">
+                              Estado del día {new Date(blockDate + 'T00:00:00').toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })}:
+                            </p>
+                            <div className="grid grid-cols-4 gap-2">
+                              {timeSlots.map((t) => {
+                                const isBlocked = blockedSlots.some(s => s.date === blockDate && s.time === t);
+                                return (
+                                  <div
+                                    key={t}
+                                    className={cn(
+                                      'px-2 py-1.5 rounded-lg text-xs text-center font-medium border',
+                                      isBlocked
+                                        ? 'bg-red-500/20 text-red-400 border-red-500/30'
+                                        : 'bg-emerald/10 text-emerald-light border-emerald/20'
+                                    )}
+                                  >
+                                    {t} {isBlocked ? '✕' : '✓'}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
                       </div>
-                      <div>
-                        <label className="block text-sm text-muted-foreground mb-2">Hora</label>
-                        <select
-                          value={newBlockedSlot.time}
-                          onChange={(e) => setNewBlockedSlot({ ...newBlockedSlot, time: e.target.value })}
-                          className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
-                        >
-                          <option value="">Seleccionar hora</option>
-                          {timeSlots.map((t) => (
-                            <option key={t} value={t}>{t}</option>
-                          ))}
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-sm text-muted-foreground mb-2">Motivo (opcional)</label>
-                        <input
-                          type="text"
-                          value={newBlockedSlot.reason}
-                          onChange={(e) => setNewBlockedSlot({ ...newBlockedSlot, reason: e.target.value })}
-                          placeholder="Ej: Vacaciones, evento..."
-                          className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
-                        />
-                      </div>
-                      <div className="flex items-end">
-                        <PremiumButton
-                          variant="cta"
-                          icon={<Plus className="w-4 h-4" />}
-                          onClick={async () => {
-                            if (!newBlockedSlot.date || !newBlockedSlot.time) {
-                              alert('Selecciona fecha y hora para bloquear.');
-                              return;
-                            }
-                            await addBlockedSlotFS({
-                              date: newBlockedSlot.date,
-                              time: newBlockedSlot.time,
-                              reason: newBlockedSlot.reason || undefined,
-                              createdBy: user?.uid || 'unknown',
-                            });
-                            await addActivityLog({
-                              action: 'blocked_slot_added',
-                              adminEmail: user?.email || 'unknown',
-                              details: `${newBlockedSlot.date} ${newBlockedSlot.time}`,
-                            });
-                            setNewBlockedSlot({ date: '', time: '', reason: '' });
-                            await refreshData();
-                          }}
-                          className="w-full"
-                        >
-                          Bloquear
-                        </PremiumButton>
+
+                      {/* Right: Range selector + actions */}
+                      <div className="space-y-4">
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-sm text-muted-foreground mb-2">Hora inicio</label>
+                            <select
+                              value={blockStartTime}
+                              onChange={(e) => setBlockStartTime(e.target.value)}
+                              className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
+                            >
+                              <option value="">Desde</option>
+                              {timeSlots.map((t) => (
+                                <option key={t} value={t}>{t}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-sm text-muted-foreground mb-2">Hora fin</label>
+                            <select
+                              value={blockEndTime}
+                              onChange={(e) => setBlockEndTime(e.target.value)}
+                              className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
+                            >
+                              <option value="">Hasta</option>
+                              {timeSlots
+                                .filter((t) => !blockStartTime || t >= blockStartTime)
+                                .map((t) => (
+                                  <option key={t} value={t}>{t}</option>
+                                ))}
+                            </select>
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-sm text-muted-foreground mb-2">Motivo (opcional)</label>
+                          <input
+                            type="text"
+                            value={blockReason}
+                            onChange={(e) => setBlockReason(e.target.value)}
+                            placeholder="Ej: Vacaciones, evento..."
+                            className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
+                          />
+                        </div>
+
+                        <div className="flex flex-col gap-3 pt-2">
+                          <PremiumButton
+                            variant="cta"
+                            icon={<Lock className="w-4 h-4" />}
+                            onClick={async () => {
+                              if (!blockDate || !blockStartTime || !blockEndTime) {
+                                alert('Selecciona fecha, hora de inicio y hora de fin.');
+                                return;
+                              }
+                              const slotsToBlock = timeSlots.filter(t => t >= blockStartTime && t <= blockEndTime);
+                              const existing = blockedSlots.filter(s => s.date === blockDate).map(s => s.time);
+                              const newSlots = slotsToBlock.filter(t => !existing.includes(t));
+                              if (newSlots.length === 0) {
+                                alert('Todas las franjas de ese rango ya están bloqueadas.');
+                                return;
+                              }
+                              for (const time of newSlots) {
+                                await addBlockedSlotFS({
+                                  date: blockDate,
+                                  time,
+                                  reason: blockReason || undefined,
+                                  createdBy: user?.uid || 'unknown',
+                                });
+                              }
+                              await addActivityLog({
+                                action: 'blocked_slot_added',
+                                adminEmail: user?.email || 'unknown',
+                                details: `${blockDate} ${blockStartTime}-${blockEndTime} (${newSlots.length} franjas)`,
+                              });
+                              setBlockStartTime('');
+                              setBlockEndTime('');
+                              setBlockReason('');
+                              await refreshData();
+                            }}
+                            className="w-full"
+                          >
+                            Bloquear rango ({blockStartTime && blockEndTime
+                              ? `${timeSlots.filter(t => t >= blockStartTime && t <= blockEndTime).length} franjas`
+                              : '...'})
+                          </PremiumButton>
+
+                          <PremiumButton
+                            variant="outline"
+                            icon={<CalendarOff className="w-4 h-4" />}
+                            onClick={async () => {
+                              if (!blockDate) {
+                                alert('Selecciona una fecha primero.');
+                                return;
+                              }
+                              const existing = blockedSlots.filter(s => s.date === blockDate).map(s => s.time);
+                              const newSlots = timeSlots.filter(t => !existing.includes(t));
+                              if (newSlots.length === 0) {
+                                alert('Ese día ya está completamente bloqueado.');
+                                return;
+                              }
+                              if (!confirm(`¿Bloquear todo el día ${new Date(blockDate + 'T00:00:00').toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })}? (${newSlots.length} franjas)`)) return;
+                              for (const time of newSlots) {
+                                await addBlockedSlotFS({
+                                  date: blockDate,
+                                  time,
+                                  reason: blockReason || 'Día completo bloqueado',
+                                  createdBy: user?.uid || 'unknown',
+                                });
+                              }
+                              await addActivityLog({
+                                action: 'blocked_slot_added',
+                                adminEmail: user?.email || 'unknown',
+                                details: `${blockDate} día completo (${newSlots.length} franjas)`,
+                              });
+                              setBlockReason('');
+                              await refreshData();
+                            }}
+                            className="w-full"
+                          >
+                            Bloquear día completo
+                          </PremiumButton>
+                        </div>
                       </div>
                     </div>
                   </GlassCard>
 
-                  {/* List of blocked slots */}
+                  {/* List of blocked slots grouped by date */}
                   <div className="space-y-3">
                     {blockedSlots.length === 0 ? (
                       <GlassCard className="p-12 text-center">
@@ -2293,15 +2803,22 @@ export default function AdminPage() {
                         </p>
                       </GlassCard>
                     ) : (
-                      blockedSlots
-                        .sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`))
-                        .map((slot) => {
-                          const slotDate = new Date(slot.date + 'T00:00:00');
+                      (() => {
+                        // Group by date
+                        const grouped: Record<string, BlockedSlot[]> = {};
+                        blockedSlots
+                          .sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`))
+                          .forEach((slot) => {
+                            if (!grouped[slot.date]) grouped[slot.date] = [];
+                            grouped[slot.date].push(slot);
+                          });
+                        return Object.entries(grouped).map(([date, slots]) => {
+                          const slotDate = new Date(date + 'T00:00:00');
                           const isPast = slotDate < new Date(new Date().toDateString());
                           return (
-                            <GlassCard key={slot.id} className={cn('p-4', isPast && 'opacity-50')}>
-                              <div className="flex items-center justify-between gap-4">
-                                <div className="flex items-center gap-4">
+                            <GlassCard key={date} className={cn('p-5', isPast && 'opacity-50')}>
+                              <div className="flex items-center justify-between mb-3">
+                                <div className="flex items-center gap-3">
                                   <div className={cn(
                                     'w-10 h-10 rounded-lg flex items-center justify-center',
                                     isPast ? 'bg-muted/30' : 'bg-red-500/20'
@@ -2311,15 +2828,10 @@ export default function AdminPage() {
                                   <div>
                                     <p className="text-ivory font-medium">
                                       {slotDate.toLocaleDateString('es-ES', {
-                                        weekday: 'long',
-                                        day: 'numeric',
-                                        month: 'long',
-                                        year: 'numeric',
-                                      })} &mdash; {slot.time}
+                                        weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+                                      })}
                                     </p>
-                                    {slot.reason && (
-                                      <p className="text-sm text-muted-foreground">{slot.reason}</p>
-                                    )}
+                                    <p className="text-xs text-muted-foreground">{slots.length} franja{slots.length !== 1 ? 's' : ''} bloqueada{slots.length !== 1 ? 's' : ''}</p>
                                   </div>
                                 </div>
                                 <PremiumButton
@@ -2327,24 +2839,53 @@ export default function AdminPage() {
                                   size="sm"
                                   icon={<Trash2 className="w-4 h-4" />}
                                   onClick={async () => {
-                                    if (confirm('¿Desbloquear esta franja?')) {
-                                      await deleteBlockedSlotFS(slot.id);
+                                    if (confirm(`¿Desbloquear todas las franjas del ${slotDate.toLocaleDateString('es-ES')}?`)) {
+                                      for (const s of slots) {
+                                        await deleteBlockedSlotFS(s.id);
+                                      }
                                       await addActivityLog({
                                         action: 'blocked_slot_removed',
                                         adminEmail: user?.email || 'unknown',
-                                        details: `${slot.date} ${slot.time}`,
+                                        details: `${date} (${slots.length} franjas)`,
                                       });
                                       await refreshData();
                                     }
                                   }}
                                   className="text-destructive hover:bg-destructive/10"
                                 >
-                                  Desbloquear
+                                  Desbloquear día
                                 </PremiumButton>
                               </div>
+                              <div className="flex flex-wrap gap-2">
+                                {slots.map((slot) => (
+                                  <button
+                                    key={slot.id}
+                                    onClick={async () => {
+                                      if (confirm(`¿Desbloquear ${slot.time}?`)) {
+                                        await deleteBlockedSlotFS(slot.id);
+                                        await addActivityLog({
+                                          action: 'blocked_slot_removed',
+                                          adminEmail: user?.email || 'unknown',
+                                          details: `${slot.date} ${slot.time}`,
+                                        });
+                                        await refreshData();
+                                      }
+                                    }}
+                                    className="px-3 py-1.5 rounded-lg bg-red-500/20 text-red-400 border border-red-500/30 text-sm hover:bg-red-500/30 transition-colors flex items-center gap-1.5"
+                                    title={slot.reason || 'Sin motivo'}
+                                  >
+                                    {slot.time}
+                                    <XCircle className="w-3.5 h-3.5" />
+                                  </button>
+                                ))}
+                              </div>
+                              {slots[0]?.reason && (
+                                <p className="text-xs text-muted-foreground mt-2">Motivo: {slots[0].reason}</p>
+                              )}
                             </GlassCard>
                           );
-                        })
+                        });
+                      })()
                     )}
                   </div>
                 </motion.div>
@@ -2432,13 +2973,16 @@ export default function AdminPage() {
                       <div className="space-y-4 mb-6">
                         <div>
                           <label className="block text-sm text-muted-foreground mb-2">Entrenador asignado</label>
-                          <input
-                            type="text"
+                          <select
                             value={approvalData.assignedTrainer}
                             onChange={(e) => setApprovalData({ ...approvalData, assignedTrainer: e.target.value })}
-                            placeholder="Ej: Sandra, Carlos..."
                             className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
-                          />
+                          >
+                            <option value="">Sin asignar</option>
+                            {trainers.filter(t => t.active).map((t) => (
+                              <option key={t.id} value={t.id}>{t.name}</option>
+                            ))}
+                          </select>
                         </div>
                         <div>
                           <label className="block text-sm text-muted-foreground mb-2">Tipo de sesión</label>

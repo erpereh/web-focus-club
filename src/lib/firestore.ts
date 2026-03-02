@@ -26,6 +26,7 @@ import type {
     TimeSlot,
     BlockedSlot,
     SlotOccupancy,
+    Trainer,
 } from '@/types';
 
 // ============================================
@@ -330,6 +331,62 @@ export async function getMonthAvailability(year: number, month: number): Promise
         getBlockedSlotsForMonth(year, month),
     ]);
     return { occupancy, blockedSlots };
+}
+
+// ============================================
+// ENTRENADORES (TRAINERS)
+// ============================================
+
+export async function getTrainers(): Promise<Trainer[]> {
+    const snap = await getDocs(collection(db, 'trainers'));
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() } as Trainer));
+}
+
+export async function getActiveTrainers(): Promise<Trainer[]> {
+    const snap = await getDocs(
+        query(collection(db, 'trainers'), where('active', '==', true))
+    );
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() } as Trainer));
+}
+
+export async function addTrainer(data: Omit<Trainer, 'id' | 'createdAt'>): Promise<string> {
+    const docRef = await addDoc(collection(db, 'trainers'), {
+        ...data,
+        createdAt: new Date().toISOString(),
+    });
+    return docRef.id;
+}
+
+export async function deleteTrainer(id: string): Promise<void> {
+    await deleteDoc(doc(db, 'trainers', id));
+}
+
+export async function getTrainerByUid(uid: string): Promise<Trainer | null> {
+    const snap = await getDocs(
+        query(collection(db, 'trainers'), where('uid', '==', uid))
+    );
+    if (snap.empty) return null;
+    const d = snap.docs[0];
+    return { id: d.id, ...d.data() } as Trainer;
+}
+
+export async function getAppointmentsByTrainer(trainerId: string): Promise<Appointment[]> {
+    const snap = await getDocs(
+        query(
+            collection(db, 'appointments'),
+            where('assignedTrainer', '==', trainerId),
+            where('status', '==', 'approved'),
+            orderBy('createdAt', 'desc')
+        )
+    );
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() } as Appointment));
+}
+
+export async function updateTrainerNotes(appointmentId: string, trainerNotes: string): Promise<void> {
+    await updateDoc(doc(db, 'appointments', appointmentId), {
+        trainerNotes,
+        updatedAt: new Date().toISOString(),
+    });
 }
 
 // ============================================

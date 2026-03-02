@@ -7,7 +7,7 @@ export interface UserProfile {
     email: string;
     name: string;
     phone: string;
-    role: 'admin' | 'user';
+    role: 'admin' | 'trainer' | 'user';
     createdAt: string;
 }
 
@@ -42,6 +42,7 @@ export interface Appointment {
     approvedSlot?: TimeSlot;
     assignedTrainer?: string;
     sessionType?: string;
+    trainerNotes?: string;
     createdAt: string;
     updatedAt?: string;
 }
@@ -59,6 +60,15 @@ export interface SlotOccupancy {
     date: string;       // "YYYY-MM-DD"
     time: string;       // "HH:00"
     count: number;      // número de personas aprobadas en esa franja
+}
+
+export interface Trainer {
+    id: string;
+    uid: string;        // referencia al uid en la colección users
+    name: string;
+    specialties?: string[];
+    active: boolean;
+    createdAt: string;
 }
 
 export interface Testimonial {
