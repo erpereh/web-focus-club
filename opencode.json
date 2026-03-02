@@ -1,0 +1,12 @@
+{
+  "mcp": {
+    "firebase": {
+      "type": "local",
+      "command": "npx -y @modelcontextprotocol/server-firebase",
+      "env": {
+        "GOOGLE_APPLICATION_CREDENTIALS": "C:/Users/Perez/Documents/antigravity/web-focus-club/focus-club-f73b8-firebase-adminsdk-fbsvc-3355d90550.json"
+      },
+      "enabled": true
+    }
+  }
+}

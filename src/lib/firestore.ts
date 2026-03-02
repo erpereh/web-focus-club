@@ -11,6 +11,8 @@ import {
     where,
     orderBy,
     Timestamp,
+    increment,
+    runTransaction,
 } from 'firebase/firestore';
 import { db } from './firebase';
 import type {
@@ -22,6 +24,8 @@ import type {
     SandraData,
     CentroData,
     TimeSlot,
+    BlockedSlot,
+    SlotOccupancy,
 } from '@/types';
 
 // ============================================
@@ -84,13 +88,17 @@ export async function addAppointment(
 export async function updateAppointmentStatus(
     id: string,
     status: Appointment['status'],
-    alternativeSlot?: TimeSlot
+    alternativeSlot?: TimeSlot,
+    extraFields?: { assignedTrainer?: string; sessionType?: string; approvedSlot?: TimeSlot }
 ): Promise<void> {
     const update: Record<string, unknown> = {
         status,
         updatedAt: new Date().toISOString(),
     };
     if (alternativeSlot) update.alternativeSlot = alternativeSlot;
+    if (extraFields?.assignedTrainer) update.assignedTrainer = extraFields.assignedTrainer;
+    if (extraFields?.sessionType) update.sessionType = extraFields.sessionType;
+    if (extraFields?.approvedSlot) update.approvedSlot = extraFields.approvedSlot;
     await updateDoc(doc(db, 'appointments', id), update);
 }
 
@@ -187,6 +195,141 @@ export async function updateCentroData(data: Partial<CentroData>): Promise<void>
     await updateDoc(doc(db, 'site_content', SITE_CONTENT_DOC), {
         centro: { ...current.centro, ...data },
     });
+}
+
+// ============================================
+// FRANJAS BLOQUEADAS (BLOCKED SLOTS)
+// ============================================
+
+export async function getBlockedSlots(): Promise<BlockedSlot[]> {
+    const snap = await getDocs(
+        query(collection(db, 'blocked_slots'), orderBy('date', 'asc'))
+    );
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() } as BlockedSlot));
+}
+
+export async function getBlockedSlotsForMonth(year: number, month: number): Promise<BlockedSlot[]> {
+    const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
+    const endMonth = month === 12 ? 1 : month + 1;
+    const endYear = month === 12 ? year + 1 : year;
+    const endDate = `${endYear}-${String(endMonth).padStart(2, '0')}-01`;
+
+    const snap = await getDocs(
+        query(
+            collection(db, 'blocked_slots'),
+            where('date', '>=', startDate),
+            where('date', '<', endDate),
+            orderBy('date', 'asc')
+        )
+    );
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() } as BlockedSlot));
+}
+
+export async function addBlockedSlot(
+    data: Omit<BlockedSlot, 'id' | 'createdAt'>
+): Promise<string> {
+    const docRef = await addDoc(collection(db, 'blocked_slots'), {
+        ...data,
+        createdAt: new Date().toISOString(),
+    });
+    return docRef.id;
+}
+
+export async function deleteBlockedSlot(id: string): Promise<void> {
+    await deleteDoc(doc(db, 'blocked_slots', id));
+}
+
+// ============================================
+// AFORO — Colección slot_occupancy (pública para lectura)
+// ============================================
+
+/**
+ * Genera el ID del documento de slot_occupancy: "YYYY-MM-DD_HH:00"
+ */
+function slotOccupancyId(date: string, time: string): string {
+    return `${date}_${time}`;
+}
+
+/**
+ * Incrementa el contador de ocupación de una franja horaria.
+ * Llamar cuando Sandra aprueba una cita.
+ */
+export async function incrementSlotOccupancy(date: string, time: string): Promise<void> {
+    const id = slotOccupancyId(date, time);
+    const ref = doc(db, 'slot_occupancy', id);
+    const snap = await getDoc(ref);
+    if (snap.exists()) {
+        await updateDoc(ref, { count: increment(1) });
+    } else {
+        await setDoc(ref, { date, time, count: 1 });
+    }
+}
+
+/**
+ * Decrementa el contador de ocupación de una franja horaria.
+ * Llamar cuando Sandra revierte una cita aprobada a pendiente/rechazada.
+ * Nunca deja el contador por debajo de 0.
+ */
+export async function decrementSlotOccupancy(date: string, time: string): Promise<void> {
+    const id = slotOccupancyId(date, time);
+    const ref = doc(db, 'slot_occupancy', id);
+    const snap = await getDoc(ref);
+    if (snap.exists()) {
+        const current = (snap.data() as SlotOccupancy).count;
+        if (current <= 1) {
+            await deleteDoc(ref);
+        } else {
+            await updateDoc(ref, { count: increment(-1) });
+        }
+    }
+}
+
+/**
+ * Devuelve un mapa con la cantidad de personas aprobadas por franja horaria
+ * para un mes dado. Clave: "YYYY-MM-DD_HH:00", valor: count.
+ * Lee de la colección slot_occupancy (accesible para cualquier usuario autenticado).
+ */
+export async function getSlotOccupancyForMonth(
+    year: number,
+    month: number
+): Promise<Record<string, number>> {
+    const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
+    const endMonth = month === 12 ? 1 : month + 1;
+    const endYear = month === 12 ? year + 1 : year;
+    const endDate = `${endYear}-${String(endMonth).padStart(2, '0')}-01`;
+
+    const snap = await getDocs(
+        query(
+            collection(db, 'slot_occupancy'),
+            where('date', '>=', startDate),
+            where('date', '<', endDate)
+        )
+    );
+
+    const occupancy: Record<string, number> = {};
+    snap.docs.forEach((d) => {
+        const data = d.data() as SlotOccupancy;
+        const key = `${data.date}_${data.time}`;
+        occupancy[key] = data.count;
+    });
+
+    return occupancy;
+}
+
+/**
+ * Obtiene disponibilidad completa para un mes:
+ * - occupancy: mapa de franjas con cantidad de personas aprobadas
+ * - blockedSlots: lista de franjas bloqueadas por la admin
+ */
+export async function getMonthAvailability(year: number, month: number): Promise<{
+    occupancy: Record<string, number>;
+    blockedSlots: BlockedSlot[];
+}> {
+    const [occupancy, blockedSlots] = await Promise.all([
+        getSlotOccupancyForMonth(year, month),
+        getBlockedSlotsForMonth(year, month),
+    ]);
+    return { occupancy, blockedSlots };
 }
 
 // ============================================

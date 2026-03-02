@@ -34,13 +34,15 @@ import {
   Trophy,
   MapPin,
   Globe,
+  Lock,
+  CalendarOff,
 } from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass-card';
 import { PremiumButton } from '@/components/ui/premium-button';
 import { ImageUpload } from '@/components/ui/ImageUpload';
 import { ContextualImageManager } from '@/components/ui/ContextualImageManager';
 import { useAuth } from '@/contexts/AuthContext';
-import type { TimeSlot, Service, Testimonial, Appointment, CMSContent } from '@/types';
+import type { TimeSlot, Service, Testimonial, Appointment, CMSContent, BlockedSlot } from '@/types';
 import {
   getAppointments,
   updateAppointmentStatus as updateAppointmentStatusFS,
@@ -60,6 +62,11 @@ import {
   updateCentroData as updateCentroDataFS,
   getUsers,
   addActivityLog,
+  getBlockedSlots,
+  addBlockedSlot as addBlockedSlotFS,
+  deleteBlockedSlot as deleteBlockedSlotFS,
+  incrementSlotOccupancy,
+  decrementSlotOccupancy,
 } from '@/lib/firestore';
 import { cn } from '@/lib/utils';
 import type { UserProfile } from '@/types';
@@ -199,7 +206,7 @@ function GaleriaTab() {
   );
 }
 
-type TabType = 'Inicio' | 'appointments' | 'clients' | 'services' | 'testimonials' | 'Sandra' | 'Centro' | 'Galeria' | 'Contacto';
+type TabType = 'Inicio' | 'appointments' | 'availability' | 'clients' | 'services' | 'testimonials' | 'Sandra' | 'Centro' | 'Galeria' | 'Contacto';
 type StatusFilter = 'all' | 'pending' | 'approved' | 'rejected' | 'alternative';
 
 const statusConfig = {
@@ -261,6 +268,21 @@ export default function AdminPage() {
   const [alternativeSlot, setAlternativeSlot] = useState<TimeSlot>({ date: '', time: '' });
   const [selectedAppointmentId, setSelectedAppointmentId] = useState<string | null>(null);
 
+  // Estado para aprobación con campos extra
+  const [approvalData, setApprovalData] = useState<{ assignedTrainer: string; sessionType: string }>({
+    assignedTrainer: '',
+    sessionType: '',
+  });
+  const [showApprovalModal, setShowApprovalModal] = useState(false);
+
+  // Estado para horarios bloqueados
+  const [blockedSlots, setBlockedSlots] = useState<BlockedSlot[]>([]);
+  const [newBlockedSlot, setNewBlockedSlot] = useState<{ date: string; time: string; reason: string }>({
+    date: '',
+    time: '',
+    reason: '',
+  });
+
   // CMS Edit States
   const [editedContent, setEditedContent] = useState<CMSContent | null>(null);
   const [editingService, setEditingService] = useState<Service | null>(null);
@@ -294,17 +316,19 @@ export default function AdminPage() {
 
   // Cargar datos desde Firestore
   const refreshData = async () => {
-    const [appts, svcs, tests, cms, usersList] = await Promise.all([
+    const [appts, svcs, tests, cms, usersList, blocked] = await Promise.all([
       getAppointments(),
       getServices(),
       getTestimonials(),
       getSiteContent(),
       getUsers(),
+      getBlockedSlots(),
     ]);
     setAppointments(appts);
     setServices(svcs);
     setTestimonials(tests);
     setClients(usersList);
+    setBlockedSlots(blocked);
     if (cms) {
       setCmsContent(cms);
       setEditedContent(cms);
@@ -348,12 +372,40 @@ export default function AdminPage() {
   };
 
   // Manejar actualización de estado
-  const handleStatusUpdate = async (id: string, status: 'pending' | 'approved' | 'rejected' | 'alternative', altSlot?: TimeSlot) => {
-    await updateAppointmentStatusFS(id, status, altSlot);
+  const handleStatusUpdate = async (
+    id: string,
+    status: 'pending' | 'approved' | 'rejected' | 'alternative',
+    altSlot?: TimeSlot,
+    extraFields?: { assignedTrainer?: string; sessionType?: string; approvedSlot?: TimeSlot }
+  ) => {
+    // Encontrar la cita actual para saber su estado previo
+    const currentAppt = appointments.find(a => a.id === id);
+    const prevStatus = currentAppt?.status;
+
+    await updateAppointmentStatusFS(id, status, altSlot, extraFields);
+
+    // Mantener slot_occupancy sincronizado
+    // Si pasa a 'approved', incrementar el aforo de la franja aprobada
+    if (status === 'approved') {
+      const slot = extraFields?.approvedSlot || currentAppt?.preferredSlots?.[0];
+      if (slot) {
+        await incrementSlotOccupancy(slot.date, slot.time);
+      }
+    }
+    // Si ESTABA aprobada y ahora cambia a otro estado, decrementar
+    if (prevStatus === 'approved' && status !== 'approved') {
+      const slot = currentAppt?.approvedSlot || currentAppt?.preferredSlots?.[0];
+      if (slot) {
+        await decrementSlotOccupancy(slot.date, slot.time);
+      }
+    }
+
     await addActivityLog({ action: `appointment_${status}`, adminEmail: user?.email || 'unknown', details: `Cita ID: ${id}` });
     await refreshData();
     setShowAlternativeModal(false);
+    setShowApprovalModal(false);
     setAlternativeSlot({ date: '', time: '' });
+    setApprovalData({ assignedTrainer: '', sessionType: '' });
     setSelectedAppointmentId(null);
   };
 
@@ -504,7 +556,7 @@ export default function AdminPage() {
   // ============================================
 
   return (
-    <div className="min-h-screen bg-obsidian">
+    <div className="min-h-screen -mt-20 bg-obsidian">
       {/* Header */}
       <header className="glass-dark border-b border-border sticky top-0 z-40">
         <div className="container mx-auto px-4">
@@ -571,6 +623,22 @@ export default function AdminPage() {
                 <span className="ml-auto bg-yellow-500/20 text-yellow-400 text-xs px-2 py-0.5 rounded-full">
                   {stats.pending}
                 </span>
+              )}
+            </button>
+
+            <button
+              onClick={() => setActiveTab('availability')}
+              className={cn(
+                'w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-left',
+                activeTab === 'availability'
+                  ? 'bg-emerald/20 text-emerald border border-emerald/30 shadow-lg shadow-emerald/10'
+                  : 'text-muted-foreground hover:bg-muted/50 hover:text-ivory'
+              )}
+            >
+              <CalendarOff className="w-5 h-5" />
+              <span className="font-medium">Disponibilidad</span>
+              {blockedSlots.length > 0 && (
+                <span className="ml-auto text-xs text-muted-foreground">{blockedSlots.length}</span>
               )}
             </button>
 
@@ -725,14 +793,22 @@ export default function AdminPage() {
                         return (
                           <div
                             key={appointment.id}
-                            className="flex items-center justify-between p-4 rounded-xl bg-muted/30 hover:bg-muted/50 transition-colors"
+                            className="flex items-center justify-between p-4 rounded-xl bg-muted/30 hover:bg-muted/50 transition-colors cursor-pointer"
+                            onClick={() => {
+                              setStatusFilter('all');
+                              setActiveTab('appointments');
+                              // Scroll to the appointment after tab switch
+                              setTimeout(() => {
+                                document.getElementById(`appt-${appointment.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                              }, 300);
+                            }}
                           >
                             <div className="flex items-center gap-4">
                               <div className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald to-accent flex items-center justify-center text-obsidian font-semibold">
                                 {appointment.name.charAt(0)}
                               </div>
                               <div>
-                                <p className="font-medium text-ivory">{appointment.name}</p>
+                                <p className="font-medium text-ivory hover:text-accent transition-colors">{appointment.name}</p>
                                 <p className="text-sm text-muted-foreground">
                                   {serviceLabels[appointment.serviceType]} - {durationLabels[appointment.duration]}
                                 </p>
@@ -795,6 +871,7 @@ export default function AdminPage() {
                       const StatusIcon = statusConfig[appointment.status].icon;
                       return (
                         <motion.div
+                          id={`appt-${appointment.id}`}
                           key={appointment.id}
                           layout
                           initial={{ opacity: 0, y: 20 }}
@@ -880,6 +957,27 @@ export default function AdminPage() {
                                   </div>
                                 )}
 
+                                {appointment.status === 'approved' && (appointment.approvedSlot || appointment.assignedTrainer || appointment.sessionType) && (
+                                  <div className="p-3 rounded-lg bg-emerald/10 border border-emerald/20">
+                                    <p className="text-xs text-emerald-light mb-2 font-semibold">Detalles de aprobación:</p>
+                                    <div className="flex flex-wrap gap-3 text-sm">
+                                      {appointment.approvedSlot && (
+                                        <span className="text-ivory">
+                                          Franja: {new Date(appointment.approvedSlot.date).toLocaleDateString('es-ES', {
+                                            weekday: 'short', day: 'numeric', month: 'short',
+                                          })} - {appointment.approvedSlot.time}
+                                        </span>
+                                      )}
+                                      {appointment.assignedTrainer && (
+                                        <span className="text-ivory">Entrenador: <strong>{appointment.assignedTrainer}</strong></span>
+                                      )}
+                                      {appointment.sessionType && (
+                                        <span className="px-2 py-0.5 rounded bg-emerald/20 text-emerald-light text-xs font-medium uppercase">{appointment.sessionType}</span>
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
+
                                 <p className="text-xs text-muted-foreground">
                                   Enviado el {new Date(appointment.createdAt).toLocaleDateString('es-ES', {
                                     day: 'numeric',
@@ -899,7 +997,11 @@ export default function AdminPage() {
                                       variant="cta"
                                       size="sm"
                                       icon={<Check className="w-4 h-4" />}
-                                      onClick={() => handleStatusUpdate(appointment.id, 'approved')}
+                                      onClick={() => {
+                                        setSelectedAppointmentId(appointment.id);
+                                        setApprovalData({ assignedTrainer: '', sessionType: '' });
+                                        setShowApprovalModal(true);
+                                      }}
                                       className="flex-1 lg:flex-none"
                                     >
                                       Aprobar
@@ -2092,6 +2194,162 @@ export default function AdminPage() {
                 </motion.div>
               )}
 
+              {/* ============================================
+                  AVAILABILITY (Blocked Slots)
+                  ============================================ */}
+              {activeTab === 'availability' && (
+                <motion.div
+                  key="availability"
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                >
+                  <div className="flex items-center justify-between mb-6">
+                    <h1 className="text-2xl font-bold text-ivory">Gestión de Disponibilidad</h1>
+                    <p className="text-sm text-muted-foreground">
+                      {blockedSlots.length} franja{blockedSlots.length !== 1 ? 's' : ''} bloqueada{blockedSlots.length !== 1 ? 's' : ''}
+                    </p>
+                  </div>
+
+                  {/* Add new blocked slot */}
+                  <GlassCard className="p-6 mb-6">
+                    <h2 className="text-lg font-semibold text-ivory mb-4 flex items-center gap-2">
+                      <Lock className="w-5 h-5 text-accent" />
+                      Bloquear Franja Horaria
+                    </h2>
+                    <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                      <div>
+                        <label className="block text-sm text-muted-foreground mb-2">Fecha</label>
+                        <input
+                          type="date"
+                          value={newBlockedSlot.date}
+                          onChange={(e) => setNewBlockedSlot({ ...newBlockedSlot, date: e.target.value })}
+                          min={new Date().toISOString().split('T')[0]}
+                          className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-muted-foreground mb-2">Hora</label>
+                        <select
+                          value={newBlockedSlot.time}
+                          onChange={(e) => setNewBlockedSlot({ ...newBlockedSlot, time: e.target.value })}
+                          className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
+                        >
+                          <option value="">Seleccionar hora</option>
+                          {timeSlots.map((t) => (
+                            <option key={t} value={t}>{t}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm text-muted-foreground mb-2">Motivo (opcional)</label>
+                        <input
+                          type="text"
+                          value={newBlockedSlot.reason}
+                          onChange={(e) => setNewBlockedSlot({ ...newBlockedSlot, reason: e.target.value })}
+                          placeholder="Ej: Vacaciones, evento..."
+                          className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
+                        />
+                      </div>
+                      <div className="flex items-end">
+                        <PremiumButton
+                          variant="cta"
+                          icon={<Plus className="w-4 h-4" />}
+                          onClick={async () => {
+                            if (!newBlockedSlot.date || !newBlockedSlot.time) {
+                              alert('Selecciona fecha y hora para bloquear.');
+                              return;
+                            }
+                            await addBlockedSlotFS({
+                              date: newBlockedSlot.date,
+                              time: newBlockedSlot.time,
+                              reason: newBlockedSlot.reason || undefined,
+                              createdBy: user?.uid || 'unknown',
+                            });
+                            await addActivityLog({
+                              action: 'blocked_slot_added',
+                              adminEmail: user?.email || 'unknown',
+                              details: `${newBlockedSlot.date} ${newBlockedSlot.time}`,
+                            });
+                            setNewBlockedSlot({ date: '', time: '', reason: '' });
+                            await refreshData();
+                          }}
+                          className="w-full"
+                        >
+                          Bloquear
+                        </PremiumButton>
+                      </div>
+                    </div>
+                  </GlassCard>
+
+                  {/* List of blocked slots */}
+                  <div className="space-y-3">
+                    {blockedSlots.length === 0 ? (
+                      <GlassCard className="p-12 text-center">
+                        <CalendarOff className="w-16 h-16 mx-auto mb-4 text-muted-foreground opacity-50" />
+                        <h3 className="text-lg font-semibold text-ivory mb-2">Sin franjas bloqueadas</h3>
+                        <p className="text-muted-foreground">
+                          Todas las franjas horarias están disponibles para reservar.
+                        </p>
+                      </GlassCard>
+                    ) : (
+                      blockedSlots
+                        .sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`))
+                        .map((slot) => {
+                          const slotDate = new Date(slot.date + 'T00:00:00');
+                          const isPast = slotDate < new Date(new Date().toDateString());
+                          return (
+                            <GlassCard key={slot.id} className={cn('p-4', isPast && 'opacity-50')}>
+                              <div className="flex items-center justify-between gap-4">
+                                <div className="flex items-center gap-4">
+                                  <div className={cn(
+                                    'w-10 h-10 rounded-lg flex items-center justify-center',
+                                    isPast ? 'bg-muted/30' : 'bg-red-500/20'
+                                  )}>
+                                    <Lock className={cn('w-5 h-5', isPast ? 'text-muted-foreground' : 'text-red-400')} />
+                                  </div>
+                                  <div>
+                                    <p className="text-ivory font-medium">
+                                      {slotDate.toLocaleDateString('es-ES', {
+                                        weekday: 'long',
+                                        day: 'numeric',
+                                        month: 'long',
+                                        year: 'numeric',
+                                      })} &mdash; {slot.time}
+                                    </p>
+                                    {slot.reason && (
+                                      <p className="text-sm text-muted-foreground">{slot.reason}</p>
+                                    )}
+                                  </div>
+                                </div>
+                                <PremiumButton
+                                  variant="ghost"
+                                  size="sm"
+                                  icon={<Trash2 className="w-4 h-4" />}
+                                  onClick={async () => {
+                                    if (confirm('¿Desbloquear esta franja?')) {
+                                      await deleteBlockedSlotFS(slot.id);
+                                      await addActivityLog({
+                                        action: 'blocked_slot_removed',
+                                        adminEmail: user?.email || 'unknown',
+                                        details: `${slot.date} ${slot.time}`,
+                                      });
+                                      await refreshData();
+                                    }
+                                  }}
+                                  className="text-destructive hover:bg-destructive/10"
+                                >
+                                  Desbloquear
+                                </PremiumButton>
+                              </div>
+                            </GlassCard>
+                          );
+                        })
+                    )}
+                  </div>
+                </motion.div>
+              )}
+
 
             </AnimatePresence>
 
@@ -2104,6 +2362,218 @@ export default function AdminPage() {
                   onSelect={activeImageManager.onSelect}
                   onClose={() => setActiveImageManager(null)}
                 />
+              )}
+            </AnimatePresence>
+
+            {/* ============================================
+                APPROVAL MODAL
+                ============================================ */}
+            <AnimatePresence>
+              {showApprovalModal && selectedAppointmentId && (
+                <motion.div
+                  key="approval-modal"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+                  onClick={() => setShowApprovalModal(false)}
+                >
+                  <motion.div
+                    initial={{ scale: 0.95, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    exit={{ scale: 0.95, opacity: 0 }}
+                    onClick={(e) => e.stopPropagation()}
+                    className="w-full max-w-lg"
+                  >
+                    <GlassCard className="p-6">
+                      <h2 className="text-xl font-bold text-ivory mb-1">Aprobar Cita</h2>
+                      <p className="text-sm text-muted-foreground mb-6">
+                        Asigna entrenador y tipo de sesión antes de confirmar. Ambos campos son opcionales.
+                      </p>
+
+                      {/* Pick one of the client's preferred slots as approved slot */}
+                      {(() => {
+                        const appt = appointments.find(a => a.id === selectedAppointmentId);
+                        if (!appt) return null;
+                        return (
+                          <div className="mb-4">
+                            <label className="block text-sm text-muted-foreground mb-2">Franja confirmada</label>
+                            <div className="flex flex-wrap gap-2">
+                              {appt.preferredSlots.map((slot, idx) => {
+                                const isSelected = approvalData.assignedTrainer === '__slot__' + idx.toString();
+                                return (
+                                  <button
+                                    key={idx}
+                                    type="button"
+                                    onClick={() => setApprovalData(prev => ({
+                                      ...prev,
+                                      assignedTrainer: prev.assignedTrainer === '__slot__' + idx.toString()
+                                        ? prev.assignedTrainer
+                                        : prev.assignedTrainer,
+                                    }))}
+                                    className={cn(
+                                      'px-3 py-1.5 rounded-lg text-sm transition-colors',
+                                      'bg-emerald/20 text-ivory'
+                                    )}
+                                  >
+                                    {new Date(slot.date).toLocaleDateString('es-ES', {
+                                      weekday: 'short',
+                                      day: 'numeric',
+                                      month: 'short',
+                                    })} - {slot.time}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                      <div className="space-y-4 mb-6">
+                        <div>
+                          <label className="block text-sm text-muted-foreground mb-2">Entrenador asignado</label>
+                          <input
+                            type="text"
+                            value={approvalData.assignedTrainer}
+                            onChange={(e) => setApprovalData({ ...approvalData, assignedTrainer: e.target.value })}
+                            placeholder="Ej: Sandra, Carlos..."
+                            className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm text-muted-foreground mb-2">Tipo de sesión</label>
+                          <select
+                            value={approvalData.sessionType}
+                            onChange={(e) => setApprovalData({ ...approvalData, sessionType: e.target.value })}
+                            className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
+                          >
+                            <option value="">Sin especificar</option>
+                            <option value="individual">Individual</option>
+                            <option value="duo">Dúo</option>
+                            <option value="assessment">Valoración</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="flex gap-3 justify-end">
+                        <PremiumButton
+                          variant="ghost"
+                          onClick={() => {
+                            setShowApprovalModal(false);
+                            setSelectedAppointmentId(null);
+                            setApprovalData({ assignedTrainer: '', sessionType: '' });
+                          }}
+                        >
+                          Cancelar
+                        </PremiumButton>
+                        <PremiumButton
+                          variant="cta"
+                          icon={<Check className="w-4 h-4" />}
+                          onClick={() => {
+                            const extra: { assignedTrainer?: string; sessionType?: string; approvedSlot?: TimeSlot } = {};
+                            if (approvalData.assignedTrainer) extra.assignedTrainer = approvalData.assignedTrainer;
+                            if (approvalData.sessionType) extra.sessionType = approvalData.sessionType;
+                            // Use the first preferred slot as the approved slot by default
+                            const appt = appointments.find(a => a.id === selectedAppointmentId);
+                            if (appt && appt.preferredSlots.length > 0) {
+                              extra.approvedSlot = appt.preferredSlots[0];
+                            }
+                            handleStatusUpdate(selectedAppointmentId, 'approved', undefined, extra);
+                          }}
+                        >
+                          Confirmar Aprobación
+                        </PremiumButton>
+                      </div>
+                    </GlassCard>
+                  </motion.div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* ============================================
+                ALTERNATIVE SLOT MODAL
+                ============================================ */}
+            <AnimatePresence>
+              {showAlternativeModal && selectedAppointmentId && (
+                <motion.div
+                  key="alternative-modal"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+                  onClick={() => {
+                    setShowAlternativeModal(false);
+                    setSelectedAppointmentId(null);
+                    setAlternativeSlot({ date: '', time: '' });
+                  }}
+                >
+                  <motion.div
+                    initial={{ scale: 0.95, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    exit={{ scale: 0.95, opacity: 0 }}
+                    onClick={(e) => e.stopPropagation()}
+                    className="w-full max-w-lg"
+                  >
+                    <GlassCard className="p-6">
+                      <h2 className="text-xl font-bold text-ivory mb-1">Proponer Alternativa</h2>
+                      <p className="text-sm text-muted-foreground mb-6">
+                        Selecciona una fecha y hora alternativa para esta cita.
+                      </p>
+
+                      <div className="space-y-4 mb-6">
+                        <div>
+                          <label className="block text-sm text-muted-foreground mb-2">Fecha</label>
+                          <input
+                            type="date"
+                            value={alternativeSlot.date}
+                            onChange={(e) => setAlternativeSlot({ ...alternativeSlot, date: e.target.value })}
+                            min={new Date().toISOString().split('T')[0]}
+                            className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm text-muted-foreground mb-2">Hora</label>
+                          <select
+                            value={alternativeSlot.time}
+                            onChange={(e) => setAlternativeSlot({ ...alternativeSlot, time: e.target.value })}
+                            className="w-full px-4 py-3 rounded-xl bg-input border border-border text-ivory focus:outline-none focus:border-emerald-light"
+                          >
+                            <option value="">Seleccionar hora</option>
+                            {timeSlots.map((t) => (
+                              <option key={t} value={t}>{t}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="flex gap-3 justify-end">
+                        <PremiumButton
+                          variant="ghost"
+                          onClick={() => {
+                            setShowAlternativeModal(false);
+                            setSelectedAppointmentId(null);
+                            setAlternativeSlot({ date: '', time: '' });
+                          }}
+                        >
+                          Cancelar
+                        </PremiumButton>
+                        <PremiumButton
+                          variant="cta"
+                          icon={<CalendarClock className="w-4 h-4" />}
+                          onClick={() => {
+                            if (!alternativeSlot.date || !alternativeSlot.time) {
+                              alert('Selecciona fecha y hora para la alternativa.');
+                              return;
+                            }
+                            handleStatusUpdate(selectedAppointmentId, 'alternative', alternativeSlot);
+                          }}
+                        >
+                          Enviar Alternativa
+                        </PremiumButton>
+                      </div>
+                    </GlassCard>
+                  </motion.div>
+                </motion.div>
               )}
             </AnimatePresence>
           </main>

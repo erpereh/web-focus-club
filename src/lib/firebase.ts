@@ -4,13 +4,13 @@ import { getAuth } from "firebase/auth";
 import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
-    apiKey: "AIzaSyAybBtOavxRoZ2unWpl5lVxFtOyxT8KksI",
-    authDomain: "focus-club-252dc.firebaseapp.com",
-    projectId: "focus-club-252dc",
-    storageBucket: "focus-club-252dc.firebasestorage.app",
-    messagingSenderId: "674130559920",
-    appId: "1:674130559920:web:54b75c668f43d141bb8c75",
-    measurementId: "G-1K4PYB6M5H",
+    apiKey: "AIzaSyCUzzk5jKa6UHyEGIcePo30YygHZbiVOAM",
+    authDomain: "focus-club-f73b8.firebaseapp.com",
+    projectId: "focus-club-f73b8",
+    storageBucket: "focus-club-f73b8.firebasestorage.app",
+    messagingSenderId: "1555015411",
+    appId: "1:1555015411:web:7ff618d77878d868e67986",
+    measurementId: "G-NG9197GH5N",
 };
 
 const app = initializeApp(firebaseConfig);

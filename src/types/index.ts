@@ -39,8 +39,26 @@ export interface Appointment {
     reason: string;
     status: 'pending' | 'approved' | 'rejected' | 'alternative';
     alternativeSlot?: TimeSlot;
+    approvedSlot?: TimeSlot;
+    assignedTrainer?: string;
+    sessionType?: string;
     createdAt: string;
     updatedAt?: string;
+}
+
+export interface BlockedSlot {
+    id: string;
+    date: string;       // "YYYY-MM-DD"
+    time: string;       // "HH:00"
+    reason?: string;
+    createdBy: string;  // uid del admin
+    createdAt: string;
+}
+
+export interface SlotOccupancy {
+    date: string;       // "YYYY-MM-DD"
+    time: string;       // "HH:00"
+    count: number;      // número de personas aprobadas en esa franja
 }
 
 export interface Testimonial {
